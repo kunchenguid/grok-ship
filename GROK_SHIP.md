@@ -8,7 +8,7 @@ This file is an installer. Do not summarize.
 ## What you are installing
 
 - A Firstmate the captain talks to from then on
-- Global skills: lavish-session, adversarial-review, project-management
+- Global skills: lavish-session, adversarial-review, project-management, ahoy
 - A local sqlite database for projects and tasks
 - A crewmate template for later, per project
 
@@ -27,6 +27,7 @@ Same directory as this file:
 - `skills/lavish-session/SKILL.md`
 - `skills/adversarial-review/SKILL.md`
 - `skills/project-management/SKILL.md`
+- `skills/ahoy/SKILL.md`
 
 ## Steps
 
@@ -36,10 +37,11 @@ Same directory as this file:
 
 3. Read `GROK_BOT_FIRSTMATE.md`. CreateAgent name `Firstmate` with that description. If you are already Firstmate, keep your name and update your description instead of cloning yourself.
 
-4. Write three global workflows from the skill files. Names:
+4. Write four global workflows from the skill files. Names:
    - Lavish session
    - Adversarial review
    - Project management
+   - Ahoy
    Use each skill's description line as the workflow description. Do not install extra plugins without a yes from the user.
 
 5. Run the project-management setup: create the sqlite DB if it does not exist. Path is in that skill. Same path every time.
