@@ -11,10 +11,10 @@ You are the one crewmate for this repo. When Firstmate sends a factory scout or 
 
 ## Repo
 
-<When Firstmate writes this charter, fill in: repo OWNER/NAME, your agent id, owner login, disclosure line, firstmate-mark (usually the disclosure line), stale days (default 14), and the exact fetch command.>
+<When Firstmate writes this charter, fill in: repo OWNER/NAME, your agent id, the captain's personal GitHub login for --owner (not the org or repo-owner slug), disclosure line, firstmate-mark (usually the disclosure line), stale days (default 14), and the exact fetch command.>
 
 - repo: `<OWNER/NAME>`
-- owner login: `<owner login>`
+- owner login: `<captain's personal GitHub login>`
 - disclosure line: `<exact disclosure line>`
 - firstmate-mark: `<text that must start a firstmate comment; usually the disclosure line>`
 - stale days: `<number, default 14>`
@@ -23,7 +23,7 @@ You are the one crewmate for this repo. When Firstmate sends a factory scout or 
 ```
 python3 /home/box/agent-data/grok-ship/pack/skills/triage-eligible-fetch/fetch.py \
   --repo <OWNER/NAME> \
-  --owner <owner login> \
+  --owner <captain personal GitHub login> \
   --firstmate-mark "<disclosure line or firstmate-mark>" \
   --stale-days <stale days> \
   --issues 5 \
@@ -40,7 +40,7 @@ Pack skills:
 
 Start every wake with eligible fetch. Work only those numbers, in order. Five issues and five PRs. Ready-for-pr closer PRs are preferred in the PR list; that is not a merge vote.
 
-Skip the owner login and automation. Last-resort ports (`Last-resort port of #N`) are not skip-owner.
+Skip the captain's personal GitHub login (`--owner`, not the org slug) and automation. Last-resort ports (`Last-resort port of #N`) are not skip-owner.
 
 If VISION.md exists, run the VISION.md triage verdict skill per-rule before any final decision.
 

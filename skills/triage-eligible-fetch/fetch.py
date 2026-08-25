@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 """Eligible-fetch for a triage crewmate. Flags only; no config file.
 
-Lists open issues and PRs that are due for triage. Owner-authored items are
-skipped except last-resort ports. Firstmate-mark comments do not reset the
-stamp clock. Existing `<!-- triage:`, `<!-- gh-axi-triage:`, and
-`<!-- treehouse-triage:` stamps still count.
+Lists open issues and PRs that are due for triage. Items authored by
+`--owner` (the captain's personal GitHub login) are skipped except
+last-resort ports. Firstmate-mark comments and automation comments/reviews
+do not reset the stamp clock. Existing `<!-- triage:`, `<!-- gh-axi-triage:`,
+and `<!-- treehouse-triage:` stamps still count.
 """
 
 from __future__ import annotations
@@ -44,6 +45,7 @@ AUTOMATION_MARKERS = (
     "renovate",
     "[bot]",
     "app/",
+    "greptile",
 )
 
 ISSUE_LIST_QUERY = """
@@ -210,6 +212,17 @@ def is_firstmate_text(text: str | None, firstmate_mark: str) -> bool:
     return text.lstrip().lower().startswith(firstmate_mark.lower())
 
 
+def is_clock_noise(activity: Activity, firstmate_mark: str) -> bool:
+    """Bot comments/reviews (and bot commits) and firstmate-mark comments do not reset the clock."""
+    if is_automation(activity.login):
+        return True
+    if activity.kind in {"comment", "review"} and is_firstmate_text(
+        activity.body, firstmate_mark
+    ):
+        return True
+    return False
+
+
 def ready_for_pr_closers(item: Item) -> list[int]:
     """PRs that close a ready-for-pr issue via Fixes/Closes/Resolves (and Closing/Resolving)."""
     texts = (item.body, *item.commit_messages)
@@ -305,9 +318,7 @@ def classify_item(
         for activity in item.activities:
             if activity.when <= stamp[0]:
                 continue
-            if activity.kind in {"comment", "review"} and is_firstmate_text(
-                activity.body, firstmate_mark
-            ):
+            if is_clock_noise(activity, firstmate_mark):
                 continue
             later_real = True
             break
@@ -580,7 +591,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--owner",
         required=True,
-        help="GitHub login to skip (repo owner); last-resort ports are kept",
+        help="Captain's personal GitHub login to skip (not the org or repo-owner slug); last-resort ports are kept",
     )
     parser.add_argument(
         "--firstmate-mark",

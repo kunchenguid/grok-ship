@@ -13,26 +13,26 @@ From the shared Grok Bot computer:
 
 ```
 python3 /home/box/agent-data/grok-ship/pack/skills/triage-eligible-fetch/fetch.py \
-  --repo <owner/name> \
-  --owner <owner-login> \
+  --repo <OWNER/NAME> \
+  --owner <captain personal GitHub login> \
   --firstmate-mark "<disclosure line>" \
   --stale-days <days, default 14> \
   --issues 5 \
   --prs 5
 ```
 
-`--repo` and `--owner` are required. `--firstmate-mark` is required and must match the start of a firstmate comment so those comments do not reset the stamp clock. There is no config file. Flags only.
+`--repo` is OWNER/NAME. `--owner` is the captain's personal GitHub login to skip, not the org or repo-owner slug. Both are required. `--firstmate-mark` is required and must match the start of a firstmate comment so those comments do not reset the stamp clock. There is no config file. Flags only.
 
 The script prints JSON: `issues` then `prs`, already ranked, already capped. Work those numbers in that order. A ready-for-pr closer PR is a work-order preference, not a merge vote.
 
 ## What the script already does
 
 - Open items only
-- Skips `--owner` except a last-resort port (`Last-resort port of #N` in title or body)
-- Skips automation authors (dependabot, github-actions, release-please, renovate, `[bot]`, `app/`)
+- Skips `--owner` (captain's personal GitHub login) except a last-resort port (`Last-resort port of #N` in title or body)
+- Skips automation authors (dependabot, github-actions, release-please, renovate, `[bot]`, `app/`, Greptile, and similar)
 - Counts existing stamps matching `<!-- *triage: ISO8601` (`triage:`, `gh-axi-triage:`, `treehouse-triage:`)
-- Skips a stamped item whose only later activity is a firstmate-mark comment, unless that stamp is `--stale-days` old (stale-restamp)
-- Firstmate-mark comments (mark at the start of the comment) do not reset the clock
+- Skips a stamped item whose only later activity is a firstmate-mark comment or an automation comment/review, unless that stamp is `--stale-days` old (stale-restamp)
+- Firstmate-mark comments (mark at the start of the comment) and automation comments/reviews do not reset the clock. Author comments and new commits still jump the line
 - Issues: unstamped and other live, newer first, then stale-restamp oldest stamp, cap `--issues` (default 5)
 - PRs: those that close a ready-for-pr issue first (Fixes / Closes / Resolves / Closing / Resolving, including `Fixes #1, #2`), then other live, then stale, cap `--prs` (default 5)
 

@@ -12,7 +12,7 @@ Close contributor pull requests that have been waiting on the author past the st
 Read these from the triage charter or the invocation. Do not hardcode them.
 
 - `repo` — `OWNER/NAME` of the target repository. Required on every `gh` call. Do not clone.
-- `owner` — GitHub login of the repo owner. Never close that login's PRs except a last-resort port whose original is also stale (or already closed).
+- `owner` — captain's personal GitHub login to exempt (not the org or repo-owner slug). Never close that login's PRs except a last-resort port whose original is also stale (or already closed).
 - `disclosure-line` — the exact first line of the required close comment.
 - `stale-days` — default 14.
 - `firstmate-mark` — text that must start a firstmate comment. Usually the disclosure line.
@@ -23,7 +23,7 @@ Stamp outcome is `closed-stale-<stale-days>d` (so `closed-stale-14d` at the defa
 
 Waiting on author means a prior triage outcome such as `waiting-author`, `waiting-author-no-mistakes`, or an equivalent "please push / fix CI / address review" that the author still owns.
 
-The clock starts at the last **author** push, author comment, or author review. Firstmate-mark comments and bot comments do not reset it. Owner comments that are firstmate-mark do not reset it.
+The clock starts at the last **author** push, author comment, or author review. Firstmate-mark comments, Greptile, and other automation comments/reviews do not reset it.
 
 Close only when that clock is at least `stale-days` old.
 
@@ -34,7 +34,7 @@ Close only when that clock is at least `stale-days` old.
 - Last-resort ports (`Last-resort port of #N`) unless original `#N` is also past `stale-days` or already closed
 - Security items that still need a captain flag
 - Owner-authored PRs that are not last-resort ports
-- Automation authors (dependabot, github-actions, release-please, renovate, `[bot]`, `app/`)
+- Automation authors (dependabot, github-actions, release-please, renovate, `[bot]`, `app/`, Greptile, and similar)
 - Drafts that are not waiting on author
 - Anything whose last author push, comment, or review is newer than `stale-days`
 

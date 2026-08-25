@@ -109,6 +109,8 @@ class SkipTests(unittest.TestCase):
         self.assertTrue(fetch.is_automation("renovate[bot]"))
         self.assertTrue(fetch.is_automation("imgbot[bot]"))
         self.assertTrue(fetch.is_automation("app/my-helper"))
+        self.assertTrue(fetch.is_automation("greptile-apps[bot]"))
+        self.assertTrue(fetch.is_automation("Greptile"))
         self.assertFalse(fetch.is_automation("human-contributor"))
         self.assertFalse(fetch.is_automation(OWNER))
 
@@ -229,6 +231,42 @@ class ClockTests(unittest.TestCase):
         self.assertIsNotNone(row)
         assert row is not None
         self.assertEqual(row.bucket, "live")
+
+    def test_bot_comment_does_not_reset_clock(self) -> None:
+        stamp_at = NOW - timedelta(days=3)
+        body = f"<!-- triage: {stamp_at.strftime('%Y-%m-%dT%H:%M:%SZ')} outcome=waiting-author -->"
+        row = classify(
+            issue(
+                activities=[
+                    activity(stamp_at, "comment", body, OWNER),
+                    activity(
+                        NOW - timedelta(hours=1),
+                        "comment",
+                        "The PR appears safe to merge.",
+                        "greptile-apps[bot]",
+                    ),
+                ]
+            )
+        )
+        self.assertIsNone(row)
+
+    def test_bot_review_does_not_reset_clock(self) -> None:
+        stamp_at = NOW - timedelta(days=3)
+        body = f"<!-- triage: {stamp_at.strftime('%Y-%m-%dT%H:%M:%SZ')} outcome=waiting-author -->"
+        row = classify(
+            pr(
+                activities=[
+                    activity(stamp_at, "comment", body, OWNER),
+                    activity(
+                        NOW - timedelta(hours=1),
+                        "review",
+                        "LGTM from CI.",
+                        "github-actions[bot]",
+                    ),
+                ]
+            )
+        )
+        self.assertIsNone(row)
 
     def test_owner_authored_issue_is_skipped(self) -> None:
         self.assertIsNone(classify(issue(author=OWNER)))
@@ -473,6 +511,15 @@ class CliTests(unittest.TestCase):
         self.assertEqual(args.stale_days, 14)
         self.assertEqual(args.issues, 5)
         self.assertEqual(args.prs, 5)
+        help_text = parser.format_help()
+        folded = " ".join(help_text.split())
+        self.assertIn("personal GitHub login", folded)
+        self.assertIn("not the org or repo-owner slug", folded)
+        self.assertIn("OWNER/NAME", folded)
+        firstmate = Path(__file__).resolve().parents[2] / "GROK_BOT_FIRSTMATE.md"
+        charter = firstmate.read_text()
+        self.assertIn("captain's personal GitHub login for `--owner`", charter)
+        self.assertIn("`--repo` stays OWNER/NAME", charter)
 
     def test_parse_repo(self) -> None:
         self.assertEqual(fetch.parse_repo("acme/tools"), ("acme", "tools"))
