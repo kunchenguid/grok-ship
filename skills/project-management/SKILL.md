@@ -62,9 +62,9 @@ If `factory.db` does not exist, create it and run the schema. If it exists, do n
 
 Firstmate writes a task row before handing work off. Reuse the task id in the crewmate message. A good `prompt` states the goal, acceptance criteria, and constraints - enough to act on without coming back for basics.
 
-If the work belongs to a repo that has no project row, sign on a crewmate from the crewmate template (`/home/box/agent-data/grok-ship/pack/GROK_BOT_CREWMATE.md`) and insert the project row (crewmate_id plus repos plus source_control).
+If a project row already maps that repo to a crewmate, reuse that crewmate. Do not overwrite crewmate_id. Do not insert a second row for the same repo.
 
-If a project row already maps that repo to a crewmate, reuse that crewmate.
+If the work belongs to a repo that has no project row, insert one row: sign on from `/home/box/agent-data/grok-ship/pack/GROK_BOT_TRIAGE.md` when the captain asked for triage (factory addendum included), otherwise from the crewmate template (`/home/box/agent-data/grok-ship/pack/GROK_BOT_CREWMATE.md`). Record crewmate_id plus repos plus source_control. Do not route factory scout/ship to a second bot.
 
 Non-software work files under the reserved `default` project row (repos `[]`, no source_control); create that row on first use.
 
@@ -81,3 +81,7 @@ The crewmate updates `status`, `branch`, `result`, and `updated_at` as it goes. 
 - Do not keep the backlog only in chat
 - Do not create one Firstmate per project
 - Do not assume GitHub when recording `source_control`
+- Do not add a role column
+- Do not invent a second mapping table
+- Do not overwrite crewmate_id
+- Do not insert a second projects row for the same repo

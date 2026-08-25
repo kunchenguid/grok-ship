@@ -20,6 +20,8 @@ Do not clone the repo onto the shared computer unless the work cannot be done by
 
 Detect this project's source control from the projects table. Do not assume GitHub.
 
+If this charter also holds standing triage, those wakes follow the triage rules; factory scout/ship still follow this file. You are the one crewmate for this repo. Do not treat standing triage as a second mapping.
+
 Update the task row as you go (status, branch, result). Empty, none, and nothing happened still get reported to Firstmate against the task id.
 
 ## Project area
