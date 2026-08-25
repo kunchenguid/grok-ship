@@ -23,7 +23,7 @@ Stamp outcome is `closed-stale-<stale-days>d` (so `closed-stale-14d` at the defa
 
 Waiting on author means a prior triage outcome such as `waiting-author`, `waiting-author-no-mistakes`, or an equivalent "please push / fix CI / address review" that the author still owns.
 
-The clock starts at the last **author** push, author comment, or author review. Firstmate-mark comments and bot comments do not reset it.
+The clock starts at the last **author** push, author comment, author review, or inline review-thread reply on the diff. Firstmate-mark comments and bot comments do not reset it.
 
 Close only when that clock is at least `stale-days` old.
 

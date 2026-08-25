@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 import sys
 import unittest
 from datetime import datetime, timedelta, timezone
@@ -101,6 +102,23 @@ class SkipTests(unittest.TestCase):
 
     def test_owner_skip_is_case_insensitive(self) -> None:
         self.assertTrue(fetch.skip_owner("Repo-Owner", OWNER, "body", "title"))
+
+    def test_skip_before_classify_drops_owner_and_automation(self) -> None:
+        self.assertTrue(fetch.skip_before_classify(issue(author=OWNER), OWNER))
+        self.assertTrue(
+            fetch.skip_before_classify(pr(author="dependabot[bot]"), OWNER)
+        )
+        self.assertFalse(fetch.skip_before_classify(issue(), OWNER))
+        self.assertFalse(
+            fetch.skip_before_classify(
+                pr(
+                    author=OWNER,
+                    body="Last-resort port of #44\n\nFixes #8",
+                    title="port",
+                ),
+                OWNER,
+            )
+        )
 
     def test_automation_skips(self) -> None:
         self.assertTrue(fetch.is_automation("dependabot[bot]"))
@@ -286,6 +304,101 @@ class ClockTests(unittest.TestCase):
     def test_dependabot_is_skipped(self) -> None:
         self.assertIsNone(classify(pr(author="dependabot[bot]")))
 
+    def test_inline_review_thread_reply_makes_live(self) -> None:
+        stamp_at = NOW - timedelta(days=1)
+        body = (
+            f"<!-- triage: {stamp_at.strftime('%Y-%m-%dT%H:%M:%SZ')} "
+            "outcome=waiting-author -->"
+        )
+        item = pr(
+            activities=[
+                activity(stamp_at, "comment", body, OWNER),
+            ]
+        )
+        payload = {
+            "repository": {
+                "pullRequest": {
+                    "reviewThreads": {
+                        "pageInfo": {"hasPreviousPage": False},
+                        "nodes": [
+                            {
+                                "comments": {
+                                    "nodes": [
+                                        {
+                                            "author": {"login": "reviewer"},
+                                            "body": "please fix this line",
+                                            "createdAt": (
+                                                stamp_at - timedelta(hours=2)
+                                            ).strftime("%Y-%m-%dT%H:%M:%SZ"),
+                                        },
+                                        {
+                                            "author": {"login": "contributor"},
+                                            "body": "fixed on the diff",
+                                            "createdAt": (
+                                                NOW - timedelta(hours=1)
+                                            ).strftime("%Y-%m-%dT%H:%M:%SZ"),
+                                        },
+                                    ]
+                                }
+                            }
+                        ],
+                    }
+                }
+            }
+        }
+        from unittest.mock import patch
+
+        with patch.object(fetch, "gh_graphql", return_value=payload) as gql:
+            fetch.backfill_review_threads(item, "acme", "tools")
+            self.assertEqual(gql.call_args.args[0], fetch.REVIEW_THREAD_PAGE_QUERY)
+        self.assertEqual([a.kind for a in item.activities[1:]], ["comment", "comment"])
+        self.assertEqual(item.activities[-1].login, "contributor")
+        row = classify(item)
+        self.assertIsNotNone(row)
+        assert row is not None
+        self.assertEqual(row.bucket, "live")
+
+    def test_bot_inline_review_reply_is_not_live(self) -> None:
+        stamp_at = NOW - timedelta(days=3)
+        body = (
+            f"<!-- triage: {stamp_at.strftime('%Y-%m-%dT%H:%M:%SZ')} "
+            "outcome=waiting-author -->"
+        )
+        item = pr(
+            activities=[
+                activity(stamp_at, "comment", body, OWNER),
+            ]
+        )
+        payload = {
+            "repository": {
+                "pullRequest": {
+                    "reviewThreads": {
+                        "pageInfo": {"hasPreviousPage": False},
+                        "nodes": [
+                            {
+                                "comments": {
+                                    "nodes": [
+                                        {
+                                            "author": {"login": "greptile-apps[bot]"},
+                                            "body": "style nit on this line",
+                                            "createdAt": (
+                                                NOW - timedelta(hours=1)
+                                            ).strftime("%Y-%m-%dT%H:%M:%SZ"),
+                                        }
+                                    ]
+                                }
+                            }
+                        ],
+                    }
+                }
+            }
+        }
+        from unittest.mock import patch
+
+        with patch.object(fetch, "gh_graphql", return_value=payload):
+            fetch.backfill_review_threads(item, "acme", "tools")
+        self.assertIsNone(classify(item))
+
 
 class RankTests(unittest.TestCase):
     def test_issues_unstamped_newer_then_oldest_stale(self) -> None:
@@ -469,6 +582,52 @@ class RankTests(unittest.TestCase):
         assert row is not None
         self.assertEqual(row.closes_ready, [9])
 
+    def test_closed_ready_for_pr_issue_is_not_a_closer(self) -> None:
+        row = classify(
+            pr(
+                body="Fixes #8",
+                closing_issues=[
+                    {
+                        "number": 8,
+                        "state": "CLOSED",
+                        "labels": ["ready-for-pr"],
+                        "body": "",
+                        "comment_bodies": [],
+                    }
+                ],
+            )
+        )
+        self.assertIsNotNone(row)
+        assert row is not None
+        self.assertEqual(row.closes_ready, [])
+        self.assertNotEqual(fetch.serialize(row).get("reason"), "ready-for-pr-closer")
+
+    def test_mixed_open_and_closed_ready_issues(self) -> None:
+        row = classify(
+            pr(
+                body="Fixes #1, #2",
+                closing_issues=[
+                    {
+                        "number": 1,
+                        "state": "closed",
+                        "labels": ["ready-for-pr"],
+                        "body": "",
+                        "comment_bodies": [],
+                    },
+                    {
+                        "number": 2,
+                        "state": "OPEN",
+                        "labels": ["ready-for-pr"],
+                        "body": "",
+                        "comment_bodies": [],
+                    },
+                ],
+            )
+        )
+        self.assertIsNotNone(row)
+        assert row is not None
+        self.assertEqual(row.closes_ready, [2])
+
     def test_ready_for_pr_stamp_in_issue_body(self) -> None:
         row = classify(
             pr(
@@ -538,6 +697,8 @@ class CliTests(unittest.TestCase):
         self.assertIn("before: $cursor, orderBy:", fetch.COMMENT_PAGE_QUERY)
         self.assertIn("number title state body", fetch.PR_LIST_QUERY)
         self.assertIn("message", fetch.PR_LIST_QUERY)
+        self.assertIn("reviewThreads(last: 40, before: $cursor)", fetch.REVIEW_THREAD_PAGE_QUERY)
+        self.assertIn("comments(last: 30)", fetch.REVIEW_THREAD_PAGE_QUERY)
 
     def test_null_repository_exits_nonzero(self) -> None:
         from unittest.mock import patch
@@ -551,6 +712,105 @@ class CliTests(unittest.TestCase):
                 )
         self.assertIn("not found", str(ctx.exception).lower())
         self.assertIn("nope/missing", str(ctx.exception))
+
+    def test_main_skips_comment_backfill_for_owner_and_bots(self) -> None:
+        from io import StringIO
+        from unittest.mock import patch
+
+        owner_issue = {
+            "number": 1,
+            "title": "captain work",
+            "url": "https://example.com/i/1",
+            "createdAt": "2026-08-20T00:00:00Z",
+            "body": "mine",
+            "author": {"login": OWNER},
+            "labels": {"nodes": []},
+            "comments": {
+                "pageInfo": {"hasPreviousPage": True, "startCursor": "c1"},
+                "nodes": [],
+            },
+        }
+        contributor_issue = {
+            "number": 2,
+            "title": "bug",
+            "url": "https://example.com/i/2",
+            "createdAt": "2026-08-21T00:00:00Z",
+            "body": "broke",
+            "author": {"login": "contributor"},
+            "labels": {"nodes": []},
+            "comments": {
+                "pageInfo": {"hasPreviousPage": False, "startCursor": None},
+                "nodes": [],
+            },
+        }
+        bot_pr = {
+            "number": 3,
+            "title": "deps",
+            "url": "https://example.com/p/3",
+            "createdAt": "2026-08-22T00:00:00Z",
+            "body": "chore",
+            "author": {"login": "dependabot[bot]"},
+            "comments": {
+                "pageInfo": {"hasPreviousPage": True, "startCursor": "c3"},
+                "nodes": [],
+            },
+            "reviews": {"nodes": []},
+            "commits": {"nodes": []},
+            "closingIssuesReferences": {"nodes": []},
+        }
+        last_resort = {
+            "number": 4,
+            "title": "port",
+            "url": "https://example.com/p/4",
+            "createdAt": "2026-08-23T00:00:00Z",
+            "body": "Last-resort port of #44",
+            "author": {"login": OWNER},
+            "comments": {
+                "pageInfo": {"hasPreviousPage": False, "startCursor": None},
+                "nodes": [],
+            },
+            "reviews": {"nodes": []},
+            "commits": {"nodes": []},
+            "closingIssuesReferences": {"nodes": []},
+        }
+
+        def paginate(_query, _owner, _name, field):
+            if field == "issues":
+                return [owner_issue, contributor_issue]
+            return [bot_pr, last_resort]
+
+        backfilled: list[int] = []
+        review_backfilled: list[int] = []
+
+        def fake_comments(item, *_args):
+            backfilled.append(item.number)
+
+        def fake_reviews(item, *_args):
+            review_backfilled.append(item.number)
+
+        stdout = StringIO()
+        with (
+            patch.object(fetch, "paginate_nodes", side_effect=paginate),
+            patch.object(fetch, "backfill_comments", side_effect=fake_comments),
+            patch.object(fetch, "backfill_review_threads", side_effect=fake_reviews),
+            patch.object(sys, "stdout", stdout),
+        ):
+            rc = fetch.main(
+                [
+                    "--repo",
+                    "acme/tools",
+                    "--owner",
+                    OWNER,
+                    "--firstmate-mark",
+                    MARK,
+                ]
+            )
+        self.assertEqual(rc, 0)
+        self.assertEqual(backfilled, [2, 4])
+        self.assertEqual(review_backfilled, [4])
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual([row["number"] for row in payload["issues"]], [2])
+        self.assertEqual([row["number"] for row in payload["prs"]], [4])
 
     def test_empty_repository_is_not_an_error(self) -> None:
         from unittest.mock import patch

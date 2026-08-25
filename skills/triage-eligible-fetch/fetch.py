@@ -128,6 +128,23 @@ query($owner: String!, $name: String!, $number: Int!, $cursor: String) {
 }
 """
 
+REVIEW_THREAD_PAGE_QUERY = """
+query($owner: String!, $name: String!, $number: Int!, $cursor: String) {
+  repository(owner: $owner, name: $name) {
+    pullRequest(number: $number) {
+      reviewThreads(last: 40, before: $cursor) {
+        pageInfo { hasPreviousPage startCursor }
+        nodes {
+          comments(last: 30) {
+            nodes { author { login } body createdAt }
+          }
+        }
+      }
+    }
+  }
+}
+"""
+
 
 def parse_iso(value: str) -> datetime:
     text = value.strip()
@@ -155,6 +172,17 @@ def skip_owner(login: str | None, owner: str, body: str | None, title: str | Non
         return False
     blob = f"{title or ''}\n{body or ''}"
     return not is_last_resort_port(blob)
+
+
+def skip_before_classify(item: Item, owner: str) -> bool:
+    """True when classify_item would drop this item before reading comments."""
+    if is_automation(item.author):
+        return True
+    return skip_owner(item.author, owner, item.body, item.title)
+
+
+def issue_is_open(issue: dict[str, Any]) -> bool:
+    return (issue.get("state") or "OPEN").upper() == "OPEN"
 
 
 def find_stamps(text: str | None) -> list[tuple[datetime, str | None]]:
@@ -241,14 +269,14 @@ def ready_for_pr_closers(item: Item) -> list[int]:
     if has_closing_keyword(*texts):
         for issue in item.closing_issues:
             number = issue.get("number")
-            if number is not None:
+            if number is not None and issue_is_open(issue):
                 add(int(number))
     if not candidates:
         return []
     by_number: dict[int, dict[str, Any]] = {}
     for issue in item.closing_issues:
         number = issue.get("number")
-        if number is None:
+        if number is None or not issue_is_open(issue):
             continue
         by_number[int(number)] = issue
     ready: list[int] = []
@@ -525,6 +553,34 @@ def backfill_comments(item: Item, repo_owner: str, repo_name: str) -> None:
         item.comment_cursor = cursor
 
 
+def backfill_review_threads(item: Item, repo_owner: str, repo_name: str) -> None:
+    """Inline review-thread replies, including author answers on the diff."""
+    if item.kind != "pr":
+        return
+    cursor = None
+    while True:
+        data = gh_graphql(
+            REVIEW_THREAD_PAGE_QUERY,
+            {
+                "owner": repo_owner,
+                "name": repo_name,
+                "number": item.number,
+                "cursor": cursor,
+            },
+        )
+        pull = ((data.get("repository") or {}).get("pullRequest")) or {}
+        conn = pull.get("reviewThreads") or {}
+        for thread in conn.get("nodes") or []:
+            comments = (thread.get("comments") or {}).get("nodes") or []
+            item.activities.extend(_parse_comments(comments))
+        page = conn.get("pageInfo") or {}
+        if not page.get("hasPreviousPage"):
+            break
+        cursor = page.get("startCursor")
+        if not cursor:
+            break
+
+
 def paginate_nodes(
     query: str, repo_owner: str, repo_name: str, field: str
 ) -> list[dict[str, Any]]:
@@ -611,10 +667,20 @@ def main(argv: list[str] | None = None) -> int:
     issue_nodes = paginate_nodes(ISSUE_LIST_QUERY, repo_owner, repo_name, "issues")
     pr_nodes = paginate_nodes(PR_LIST_QUERY, repo_owner, repo_name, "pullRequests")
 
-    issues = [item_from_issue(node) for node in issue_nodes]
-    prs = [item_from_pr(node) for node in pr_nodes]
+    issues = [
+        item
+        for item in (item_from_issue(node) for node in issue_nodes)
+        if not skip_before_classify(item, args.owner)
+    ]
+    prs = [
+        item
+        for item in (item_from_pr(node) for node in pr_nodes)
+        if not skip_before_classify(item, args.owner)
+    ]
     for item in issues + prs:
         backfill_comments(item, repo_owner, repo_name)
+    for item in prs:
+        backfill_review_threads(item, repo_owner, repo_name)
 
     classified_issues = [
         row
