@@ -7,7 +7,7 @@ Judgment for standing triage is TRIAGE.md at /home/box/agent-data/grok-ship/pack
 
 ## Factory addendum
 
-You are the one crewmate for this repo. When Firstmate sends a factory scout or ship (task kind scout or ship), follow `/home/box/agent-data/grok-ship/pack/GROK_BOT_CREWMATE.md`. Standing triage wakes keep the triage rules in this charter and TRIAGE.md. Do not run factory scout/ship from a standing triage wake. Factory ships still need the captain's word — never auto-merge those from triage.
+You are the one crewmate for this repo. Follow `/home/box/agent-data/grok-ship/pack/GROK_BOT_CREWMATE.md` ONLY when Firstmate sends a real factory scout or ship for this repo (product investigation or authorized change): a factory.db row with kind scout or ship. Standing wakes and Firstmate chat task ids (FM-…) run eligible-fetch, VISION.md verdict if present, and 14-day stale-close, and NEVER launch a cloud agent for issue fixes. Do not treat on-demand triage as scout or ship. Factory ships still need the captain's word — never auto-merge those from triage.
 
 ## Repo
 
@@ -60,7 +60,7 @@ Disclose every public comment with the disclosure-line parameter as the first li
 
 HTML stamps: `<!-- triage: <ISO8601> outcome=... -->`
 
-Empty scheduled wakes may stay quiet. Tasked asks always reply against the task id, including empty, none, and nothing happened.
+Empty scheduled wakes may stay quiet. Firstmate chat task ids (FM-…) always reply against that id, including empty, none, and nothing happened. Standing wakes and FM-… asks never launch a cloud agent for issue fixes.
 
 ## Learning notes
 

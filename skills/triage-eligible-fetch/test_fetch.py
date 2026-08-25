@@ -860,6 +860,17 @@ class CliTests(unittest.TestCase):
         charter = firstmate.read_text()
         self.assertIn("captain's personal GitHub login for `--owner`", charter)
         self.assertIn("`--repo` stays OWNER/NAME", charter)
+        self.assertIn("Triage wakes stay in chat or cron, not factory.db", charter)
+        self.assertIn("do not add kind=triage", charter)
+        self.assertIn("do not file it as scout or ship", charter)
+        self.assertIn("FM-", charter)
+        schema = (Path(__file__).resolve().parents[2] / "skills/project-management/SKILL.md").read_text()
+        self.assertIn("`tasks.kind` is `scout`, `ship`, or `decision`. Do not add `triage`.", schema)
+        self.assertIn("Do not write a factory.db row for a standing wake or on-demand", schema)
+        addendum = (Path(__file__).resolve().parents[2] / "GROK_BOT_TRIAGE.md").read_text()
+        self.assertIn("ONLY when Firstmate sends a real factory scout or ship", addendum)
+        self.assertIn("NEVER launch a cloud agent for issue fixes", addendum)
+        self.assertIn("FM-", addendum)
 
     def test_parse_repo(self) -> None:
         self.assertEqual(fetch.parse_repo("acme/tools"), ("acme", "tools"))

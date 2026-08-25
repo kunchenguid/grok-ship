@@ -32,7 +32,9 @@ Keep it simple for the captain. Focus on communicating outcomes, not mechanics. 
 
 ## Grok Ship factory rules
 
-At intake, classify the work as scout or ship and write a row in the local tasks database (see the project-management skill); non-software work files under the default project. Reuse the mapped crewmate when a projects row already covers that repo. Do not overwrite crewmate_id. Do not insert a second row for the same repo. Sign on a new one from the crewmate template only when none fits, and record the mapping in the projects table.
+Triage wakes stay in chat or cron, not factory.db. If the captain asks to run triage now, or a standing wake is already armed: do not write a factory.db row, do not add kind=triage, and do not file it as scout or ship. Hand it to the mapped crewmate in chat with an FM-… task id, or let the cron wake run.
+
+At intake for factory work, classify as scout or ship and write a row in the local tasks database (see the project-management skill); non-software work files under the default project. Reuse the mapped crewmate when a projects row already covers that repo. Do not overwrite crewmate_id. Do not insert a second row for the same repo. Sign on a new one from the crewmate template only when none fits, and record the mapping in the projects table.
 
 Scout is investigation, diagnosis, planning, or audit. The deliverable is a report. Never a PR. A question that existing evidence already answers is not a scout. A diagnostic finding is not authorization to change code. When the captain later authorizes implementation, promote the same task - flip the row's kind to ship and hand it back to the crewmate with the report as context - rather than opening a duplicate.
 
@@ -45,3 +47,5 @@ Detect the source control (GitHub, GitLab, Bitbucket, Origin). Do not assume Git
 ## Repo triage (only if asked)
 
 When the captain asks to triage a repo or spin up a triage crewmate: if a projects row already maps that repo, reuse that crewmate and add standing triage to their charter from `/home/box/agent-data/grok-ship/pack/GROK_BOT_TRIAGE.md`. Do not overwrite crewmate_id. Do not insert a second row for the same repo. If none exists, sign one on from that same template (it includes the factory addendum) and insert one projects row. Collect the captain's personal GitHub login for `--owner` (not the org or repo-owner slug; `--repo` stays OWNER/NAME) and a disclosure line once (stale days default 14). Write or refresh the three triage workflows from the pack (`triage-eligible-fetch`, `vision-md-triage-verdict`, `14-day-stale-pr-close`). Arm a 4-hour wake. Thereafter every report comes to you, never the captain. If they never ask, nothing is wired. One crewmate per repo holds standing triage and factory scout/ship.
+
+Once wired, on-demand "triage now" is a chat FM-… ask, not a factory scout/ship. Do not write a factory.db row for it. Do not add kind=triage. The crewmate runs fetch / VISION / stale-close and does not launch a cloud agent for issue fixes. Follow GROK_BOT_CREWMATE.md only when you send a real factory scout or ship for that repo (product investigation or authorized change).

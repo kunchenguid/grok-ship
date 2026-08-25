@@ -47,7 +47,7 @@ CREATE TABLE IF NOT EXISTS tasks (
 
 `projects.repos` is a JSON array of repo slugs or URLs. `projects.source_control` is `github`, `gitlab`, `bitbucket`, or `origin`.
 
-`tasks.kind` is `scout`, `ship`, or `decision`.
+`tasks.kind` is `scout`, `ship`, or `decision`. Do not add `triage`.
 `tasks.status` is `queued`, `underway`, `blocked`, `done`, or `cancelled`.
 `tasks.result` is the outcome pointer: scout report path, or ship PR URL.
 `gate_kind` is optional: `after-task`, `at-time`, or `captain`.
@@ -60,7 +60,9 @@ If `factory.db` does not exist, create it and run the schema. If it exists, do n
 
 ## Intake
 
-Firstmate writes a task row before handing work off. Reuse the task id in the crewmate message. A good `prompt` states the goal, acceptance criteria, and constraints - enough to act on without coming back for basics.
+Firstmate writes a task row before handing factory work off. Reuse the task id in the crewmate message. A good `prompt` states the goal, acceptance criteria, and constraints - enough to act on without coming back for basics.
+
+Triage wakes stay in chat or cron, not factory.db. Do not write a factory.db row for a standing wake or on-demand "triage now". Do not add kind=triage. Do not file those as scout or ship.
 
 If a project row already maps that repo to a crewmate, reuse that crewmate. Do not overwrite crewmate_id. Do not insert a second row for the same repo.
 
@@ -78,7 +80,10 @@ The crewmate updates `status`, `branch`, `result`, and `updated_at` as it goes. 
 
 ## Do not
 
-- Do not keep the backlog only in chat
+- Do not keep the factory backlog only in chat
+- Do not write a factory.db row for a triage wake
+- Do not add kind=triage
+- Do not file on-demand "triage now" as scout or ship
 - Do not create one Firstmate per project
 - Do not assume GitHub when recording `source_control`
 - Do not add a role column

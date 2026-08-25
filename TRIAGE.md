@@ -25,7 +25,7 @@ No `VISION.md` means you still classify the work; you just have no vision file t
 - **Opt-in** — new behavior that stays off unless chosen. May auto-merge when the rest of the bar is met.
 - **Corrective** — bugfix, test, docs, or restore-intended-behavior. May auto-merge when the rest of the bar is met.
 
-Factory ships on the `GROK_BOT_CREWMATE.md` path still need the captain's word. Do not auto-merge them from a standing triage wake. When Firstmate sends a factory scout or ship, that same crewmate follows `GROK_BOT_CREWMATE.md`; this file does not apply to that wake.
+Factory ships on the `GROK_BOT_CREWMATE.md` path still need the captain's word. Do not auto-merge them from a standing triage wake. Follow `GROK_BOT_CREWMATE.md` ONLY when Firstmate sends a real factory scout or ship for that repo (product investigation or authorized change). This file does not apply to that factory wake.
 
 ## Ready vs not
 
@@ -53,4 +53,6 @@ Keep new stamps in that generic form so eligible-fetch continues to see them.
 
 ## Wakes
 
-A standing scheduled wake with an empty eligible list may stay quiet. A tasked ask from Firstmate always gets a reply against the task id, including empty, none, and nothing happened.
+Triage wakes stay in chat or cron, not factory.db. Do not file them as scout or ship. There is no kind=triage.
+
+Standing wakes and Firstmate chat task ids (FM-…) run eligible-fetch, VISION, and stale-close. Never launch a cloud agent for issue fixes. A standing scheduled wake with an empty eligible list may stay quiet. An FM-… ask from Firstmate always gets a reply against that id, including empty, none, and nothing happened.
