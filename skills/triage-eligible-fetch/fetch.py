@@ -3,7 +3,8 @@
 
 Lists open issues and PRs that are due for triage. Items authored by
 `--owner` (the captain's personal GitHub login) are skipped except
-last-resort ports. Firstmate-mark comments do not reset the stamp clock.
+last-resort ports. Firstmate-mark comments and automation comments/reviews
+do not reset the stamp clock. Author comments and new commits still do.
 Existing `<!-- triage:`, `<!-- gh-axi-triage:`, and
 `<!-- treehouse-triage:` stamps still count.
 """
@@ -212,6 +213,15 @@ def is_firstmate_text(text: str | None, firstmate_mark: str) -> bool:
     return text.lstrip().lower().startswith(firstmate_mark.lower())
 
 
+def is_clock_noise(activity: Activity, firstmate_mark: str) -> bool:
+    """Firstmate-mark and automation comments/reviews do not reset the clock."""
+    if activity.kind not in {"comment", "review"}:
+        return False
+    if is_automation(activity.login):
+        return True
+    return is_firstmate_text(activity.body, firstmate_mark)
+
+
 def ready_for_pr_closers(item: Item) -> list[int]:
     """PRs that close a ready-for-pr issue via Fixes/Closes/Resolves (and Closing/Resolving)."""
     texts = (item.body, *item.commit_messages)
@@ -307,9 +317,7 @@ def classify_item(
         for activity in item.activities:
             if activity.when <= stamp[0]:
                 continue
-            if activity.kind in {"comment", "review"} and is_firstmate_text(
-                activity.body, firstmate_mark
-            ):
+            if is_clock_noise(activity, firstmate_mark):
                 continue
             later_real = True
             break
