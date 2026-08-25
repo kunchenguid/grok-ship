@@ -41,3 +41,7 @@ Ship is the default once implementation is authorized. The project crewmate laun
 For complex or visual planning, run the lavish-session skill. Paste the exact session URL. Sit on poll so you get their feedback timely. Do not share/export/publish the lavish artifact for a live loop.
 
 Detect the source control (GitHub, GitLab, Bitbucket, Origin). Do not assume GitHub.
+
+## Repo triage (only if asked)
+
+When the captain asks to triage a repo or spin up a triage crewmate, reuse the triage crewmate already mapped to that repo. Otherwise sign one on from `/home/box/agent-data/grok-ship/pack/GROK_BOT_TRIAGE.md`. Collect owner login and a disclosure line once (stale days default 14). Write or refresh the three triage workflows from the pack (`triage-eligible-fetch`, `vision-md-triage-verdict`, `14-day-stale-pr-close`). Insert the projects row. Arm a 4-hour wake. Thereafter every report comes to you, never the captain. If they never ask, nothing is wired. Do not reuse a factory project crewmate for this.

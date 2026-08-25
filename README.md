@@ -28,7 +28,7 @@ It helps turn your Grok Bot into a small software factory: scout vs ship work, p
 Bots never execute on your machine.
 They run on the shared Grok Bot computer; project work runs on ephemeral Cursor cloud agents.
 
-After install, talk only to Firstmate - the one agent you chat with in the factory.
+After install, talk only to Firstmate - the one agent you chat with in the factory. If you ask, Firstmate can sign on a repo triage crewmate; that is not part of the factory install.
 
 ## Features
 

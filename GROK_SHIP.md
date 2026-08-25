@@ -10,7 +10,7 @@ This file is an installer. Do not summarize.
 - A Firstmate the captain talks to from then on
 - Global skills: lavish-session, adversarial-review, project-management, ahoy
 - A local sqlite database for projects and tasks
-- A crewmate template for later, per project
+- A crewmate template for later, per project. Repo triage is not part of this install; if asked later, Firstmate can sign on a triage crewmate.
 
 ## The three computers
 
@@ -24,10 +24,16 @@ Same directory as this file:
 
 - `GROK_BOT_FIRSTMATE.md` — Firstmate charter
 - `GROK_BOT_CREWMATE.md` — per-project crewmate charter
+- `GROK_BOT_TRIAGE.md` — per-repo triage crewmate charter, signed on only when asked
+- `TRIAGE.md` — triage judgment, not an installer
 - `skills/lavish-session/SKILL.md`
 - `skills/adversarial-review/SKILL.md`
 - `skills/project-management/SKILL.md`
 - `skills/ahoy/SKILL.md`
+- `skills/triage-eligible-fetch/SKILL.md`
+- `skills/triage-eligible-fetch/fetch.py`
+- `skills/vision-md-triage-verdict/SKILL.md`
+- `skills/14-day-stale-pr-close/SKILL.md`
 
 ## Steps
 
