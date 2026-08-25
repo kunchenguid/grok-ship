@@ -31,8 +31,8 @@ The script prints JSON: `issues` then `prs`, already ranked, already capped. Wor
 - Skips `--owner` (captain's personal GitHub login) except a last-resort port (`Last-resort port of #N` in title or body)
 - Skips automation authors (dependabot, github-actions, release-please, renovate, `[bot]`, `app/`, Greptile, and similar)
 - Counts existing stamps matching `<!-- *triage: ISO8601` (`triage:`, `gh-axi-triage:`, `treehouse-triage:`)
-- Skips a stamped item whose only later activity is a firstmate-mark comment or an automation comment/review, unless that stamp is `--stale-days` old (stale-restamp)
-- Firstmate-mark comments (mark at the start of the comment) and automation comments/reviews do not reset the clock. Author comments and new commits still jump the line
+- Skips a stamped item whose only later activity is a firstmate-mark comment, unless that stamp is `--stale-days` old (stale-restamp)
+- Firstmate-mark comments (mark at the start of the comment) do not reset the clock
 - Issues: unstamped and other live, newer first, then stale-restamp oldest stamp, cap `--issues` (default 5)
 - PRs: those that close a ready-for-pr issue first (Fixes / Closes / Resolves / Closing / Resolving, including `Fixes #1, #2`), then other live, then stale, cap `--prs` (default 5)
 

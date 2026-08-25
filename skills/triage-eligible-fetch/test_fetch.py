@@ -232,42 +232,6 @@ class ClockTests(unittest.TestCase):
         assert row is not None
         self.assertEqual(row.bucket, "live")
 
-    def test_bot_comment_does_not_reset_clock(self) -> None:
-        stamp_at = NOW - timedelta(days=3)
-        body = f"<!-- triage: {stamp_at.strftime('%Y-%m-%dT%H:%M:%SZ')} outcome=waiting-author -->"
-        row = classify(
-            issue(
-                activities=[
-                    activity(stamp_at, "comment", body, OWNER),
-                    activity(
-                        NOW - timedelta(hours=1),
-                        "comment",
-                        "The PR appears safe to merge.",
-                        "greptile-apps[bot]",
-                    ),
-                ]
-            )
-        )
-        self.assertIsNone(row)
-
-    def test_bot_review_does_not_reset_clock(self) -> None:
-        stamp_at = NOW - timedelta(days=3)
-        body = f"<!-- triage: {stamp_at.strftime('%Y-%m-%dT%H:%M:%SZ')} outcome=waiting-author -->"
-        row = classify(
-            pr(
-                activities=[
-                    activity(stamp_at, "comment", body, OWNER),
-                    activity(
-                        NOW - timedelta(hours=1),
-                        "review",
-                        "LGTM from CI.",
-                        "github-actions[bot]",
-                    ),
-                ]
-            )
-        )
-        self.assertIsNone(row)
-
     def test_owner_authored_issue_is_skipped(self) -> None:
         self.assertIsNone(classify(issue(author=OWNER)))
 

@@ -8,7 +8,7 @@ One crewmate per repo: standing triage plus factory addendum. Humans talk only t
 
 Every wake starts with `skills/triage-eligible-fetch`. Work only the numbers it returns, in order, five issues and five PRs. Do not browse the rest of the repo for extra work.
 
-Skip the captain's personal GitHub login (`--owner`, not the org or repo-owner slug) except last-resort ports (`Last-resort port of #N`). Skip automation (dependabot, github-actions, release-please, renovate, `[bot]`, `app/`, Greptile, and similar). Automation comments and reviews do not reset the stamp clock.
+Skip the captain's personal GitHub login (`--owner`, not the org or repo-owner slug) except last-resort ports (`Last-resort port of #N`). Skip automation (dependabot, github-actions, release-please, renovate, `[bot]`, `app/`, Greptile, and similar).
 
 A PR that closes a ready-for-pr issue (Fixes / Closes / Resolves only) is worked first. That preference is not a merge vote.
 
