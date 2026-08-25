@@ -54,6 +54,19 @@ def pr(**kwargs) -> fetch.Item:
     return fetch.Item(**values)
 
 
+def closing_issue(number: int, **kwargs) -> dict:
+    values: dict = {
+        "number": number,
+        "labels": ["ready-for-pr"],
+        "body": "",
+        "comment_bodies": [],
+        "nameWithOwner": REPO,
+        "state": "OPEN",
+    }
+    values.update(kwargs)
+    return values
+
+
 def classify(item: fetch.Item, **kwargs) -> fetch.Classified | None:
     params = dict(owner=OWNER, firstmate_mark=MARK, stale_days=14, now=NOW, repo=REPO)
     params.update(kwargs)
@@ -400,6 +413,77 @@ class ClockTests(unittest.TestCase):
             fetch.backfill_review_threads(item, "acme", "tools")
         self.assertIsNone(classify(item))
 
+    def test_paginated_thread_comments_count_author_reply(self) -> None:
+        stamp_at = NOW - timedelta(days=1)
+        body = (
+            f"<!-- triage: {stamp_at.strftime('%Y-%m-%dT%H:%M:%SZ')} "
+            "outcome=waiting-author -->"
+        )
+        item = pr(activities=[activity(stamp_at, "comment", body, OWNER)])
+
+        def gh(query: str, variables: dict) -> dict:
+            if query == fetch.REVIEW_THREAD_PAGE_QUERY:
+                return {
+                    "repository": {
+                        "pullRequest": {
+                            "reviewThreads": {
+                                "pageInfo": {"hasPreviousPage": False},
+                                "nodes": [
+                                    {
+                                        "id": "thread1",
+                                        "comments": {
+                                            "pageInfo": {
+                                                "hasPreviousPage": True,
+                                                "startCursor": "old",
+                                            },
+                                            "nodes": [
+                                                {
+                                                    "author": {
+                                                        "login": "greptile-apps[bot]"
+                                                    },
+                                                    "body": "style nit",
+                                                    "createdAt": (
+                                                        NOW - timedelta(minutes=10)
+                                                    ).strftime("%Y-%m-%dT%H:%M:%SZ"),
+                                                }
+                                            ],
+                                        },
+                                    }
+                                ],
+                            }
+                        }
+                    }
+                }
+            self.assertEqual(query, fetch.REVIEW_THREAD_COMMENT_PAGE_QUERY)
+            self.assertEqual(variables["id"], "thread1")
+            return {
+                "node": {
+                    "comments": {
+                        "pageInfo": {"hasPreviousPage": False},
+                        "nodes": [
+                            {
+                                "author": {"login": "contributor"},
+                                "body": "fixed on the diff",
+                                "createdAt": (NOW - timedelta(hours=1)).strftime(
+                                    "%Y-%m-%dT%H:%M:%SZ"
+                                ),
+                            }
+                        ],
+                    }
+                }
+            }
+
+        from unittest.mock import patch
+
+        with patch.object(fetch, "gh_graphql", side_effect=gh):
+            fetch.backfill_review_threads(item, "acme", "tools")
+        logins = [act.login for act in item.activities[1:]]
+        self.assertIn("contributor", logins)
+        row = classify(item)
+        self.assertIsNotNone(row)
+        assert row is not None
+        self.assertEqual(row.bucket, "live")
+
 
 class RankTests(unittest.TestCase):
     def test_issues_unstamped_newer_then_oldest_stale(self) -> None:
@@ -439,14 +523,7 @@ class RankTests(unittest.TestCase):
                 number=11,
                 created_at=NOW - timedelta(days=5),
                 body="Closes #8",
-                closing_issues=[
-                    {
-                        "number": 8,
-                        "labels": ["ready-for-pr"],
-                        "body": "",
-                        "comment_bodies": [],
-                    }
-                ],
+                closing_issues=[closing_issue(8)],
             )
         )
         other = classify(
@@ -508,14 +585,7 @@ class RankTests(unittest.TestCase):
         row = classify(
             pr(
                 body="Closing this now.",
-                closing_issues=[
-                    {
-                        "number": 8,
-                        "labels": ["ready-for-pr"],
-                        "body": "",
-                        "comment_bodies": [],
-                    }
-                ],
+                closing_issues=[closing_issue(8)],
             )
         )
         self.assertIsNotNone(row)
@@ -525,16 +595,7 @@ class RankTests(unittest.TestCase):
             pr(
                 body="fix: handle the crash",
                 commit_messages=["fix: handle the crash"],
-                closing_issues=[
-                    {
-                        "number": 8,
-                        "state": "OPEN",
-                        "nameWithOwner": REPO,
-                        "labels": ["ready-for-pr"],
-                        "body": "",
-                        "comment_bodies": [],
-                    }
-                ],
+                closing_issues=[closing_issue(8)],
             )
         )
         self.assertIsNotNone(conventional)
@@ -548,22 +609,7 @@ class RankTests(unittest.TestCase):
         row = classify(
             pr(
                 body="Fixes #1",
-                closing_issues=[
-                    {
-                        "number": 1,
-                        "nameWithOwner": REPO,
-                        "labels": ["ready-for-pr"],
-                        "body": "",
-                        "comment_bodies": [],
-                    },
-                    {
-                        "number": 2,
-                        "nameWithOwner": REPO,
-                        "labels": ["ready-for-pr"],
-                        "body": "",
-                        "comment_bodies": [],
-                    },
-                ],
+                closing_issues=[closing_issue(1), closing_issue(2)],
             )
         )
         self.assertIsNotNone(row)
@@ -575,14 +621,7 @@ class RankTests(unittest.TestCase):
             pr(
                 body="no keywords in the body",
                 commit_messages=["Fixes #9"],
-                closing_issues=[
-                    {
-                        "number": 9,
-                        "labels": ["ready-for-pr"],
-                        "body": "",
-                        "comment_bodies": [],
-                    }
-                ],
+                closing_issues=[closing_issue(9)],
             )
         )
         self.assertIsNotNone(row)
@@ -593,20 +632,7 @@ class RankTests(unittest.TestCase):
         row = classify(
             pr(
                 body="Fixes #1, #2",
-                closing_issues=[
-                    {
-                        "number": 1,
-                        "labels": ["ready-for-pr"],
-                        "body": "",
-                        "comment_bodies": [],
-                    },
-                    {
-                        "number": 2,
-                        "labels": ["ready-for-pr"],
-                        "body": "",
-                        "comment_bodies": [],
-                    },
-                ],
+                closing_issues=[closing_issue(1), closing_issue(2)],
             )
         )
         self.assertIsNotNone(row)
@@ -617,14 +643,7 @@ class RankTests(unittest.TestCase):
         row = classify(
             pr(
                 body="See #8",
-                closing_issues=[
-                    {
-                        "number": 8,
-                        "labels": ["ready-for-pr"],
-                        "body": "",
-                        "comment_bodies": [],
-                    }
-                ],
+                closing_issues=[closing_issue(8)],
             )
         )
         self.assertIsNotNone(row)
@@ -636,14 +655,13 @@ class RankTests(unittest.TestCase):
             pr(
                 body="Resolves #9",
                 closing_issues=[
-                    {
-                        "number": 9,
-                        "labels": [],
-                        "body": "",
-                        "comment_bodies": [
+                    closing_issue(
+                        9,
+                        labels=[],
+                        comment_bodies=[
                             "<!-- triage: 2026-08-19T23:40:00Z outcome=ready-for-pr -->"
                         ],
-                    }
+                    )
                 ],
             )
         )
@@ -655,15 +673,7 @@ class RankTests(unittest.TestCase):
         row = classify(
             pr(
                 body="Fixes #8",
-                closing_issues=[
-                    {
-                        "number": 8,
-                        "state": "CLOSED",
-                        "labels": ["ready-for-pr"],
-                        "body": "",
-                        "comment_bodies": [],
-                    }
-                ],
+                closing_issues=[closing_issue(8, state="CLOSED")],
             )
         )
         self.assertIsNotNone(row)
@@ -676,20 +686,8 @@ class RankTests(unittest.TestCase):
             pr(
                 body="Fixes #1, #2",
                 closing_issues=[
-                    {
-                        "number": 1,
-                        "state": "closed",
-                        "labels": ["ready-for-pr"],
-                        "body": "",
-                        "comment_bodies": [],
-                    },
-                    {
-                        "number": 2,
-                        "state": "OPEN",
-                        "labels": ["ready-for-pr"],
-                        "body": "",
-                        "comment_bodies": [],
-                    },
+                    closing_issue(1, state="closed"),
+                    closing_issue(2),
                 ],
             )
         )
@@ -701,16 +699,7 @@ class RankTests(unittest.TestCase):
         foreign_url = classify(
             pr(
                 body="Fixes https://github.com/other/repo/issues/8",
-                closing_issues=[
-                    {
-                        "number": 8,
-                        "state": "OPEN",
-                        "nameWithOwner": REPO,
-                        "labels": ["ready-for-pr"],
-                        "body": "",
-                        "comment_bodies": [],
-                    }
-                ],
+                closing_issues=[closing_issue(8)],
             )
         )
         self.assertIsNotNone(foreign_url)
@@ -719,16 +708,7 @@ class RankTests(unittest.TestCase):
         shorthand = classify(
             pr(
                 body="Fixes other/repo#8",
-                closing_issues=[
-                    {
-                        "number": 8,
-                        "state": "OPEN",
-                        "nameWithOwner": "other/repo",
-                        "labels": ["ready-for-pr"],
-                        "body": "",
-                        "comment_bodies": [],
-                    }
-                ],
+                closing_issues=[closing_issue(8, nameWithOwner="other/repo")],
             )
         )
         self.assertIsNotNone(shorthand)
@@ -738,22 +718,8 @@ class RankTests(unittest.TestCase):
             pr(
                 body="Fixes #1",
                 closing_issues=[
-                    {
-                        "number": 1,
-                        "state": "OPEN",
-                        "nameWithOwner": REPO,
-                        "labels": ["ready-for-pr"],
-                        "body": "",
-                        "comment_bodies": [],
-                    },
-                    {
-                        "number": 1,
-                        "state": "OPEN",
-                        "nameWithOwner": "other/repo",
-                        "labels": ["ready-for-pr"],
-                        "body": "",
-                        "comment_bodies": [],
-                    },
+                    closing_issue(1),
+                    closing_issue(1, nameWithOwner="other/repo"),
                 ],
             )
         )
@@ -763,16 +729,7 @@ class RankTests(unittest.TestCase):
         same_repo = classify(
             pr(
                 body="Fixes acme/tools#4",
-                closing_issues=[
-                    {
-                        "number": 4,
-                        "state": "OPEN",
-                        "nameWithOwner": "Acme/Tools",
-                        "labels": ["ready-for-pr"],
-                        "body": "",
-                        "comment_bodies": [],
-                    }
-                ],
+                closing_issues=[closing_issue(4, nameWithOwner="Acme/Tools")],
             )
         )
         self.assertIsNotNone(same_repo)
@@ -809,17 +766,112 @@ class RankTests(unittest.TestCase):
         self.assertEqual(item.closing_issues[0]["nameWithOwner"], "other/repo")
         self.assertEqual(fetch.ready_for_pr_closers(item, REPO), [])
 
+    def test_missing_name_with_owner_is_not_local(self) -> None:
+        self.assertFalse(fetch.linked_issue_in_repo({"number": 8}, REPO))
+        self.assertFalse(fetch.linked_issue_in_repo({"number": 8, "nameWithOwner": ""}, REPO))
+        row = classify(
+            pr(body="Fixes #8", closing_issues=[closing_issue(8, nameWithOwner="")])
+        )
+        self.assertIsNotNone(row)
+        assert row is not None
+        self.assertEqual(row.closes_ready, [])
+
+    def test_null_repository_closing_issue_is_not_local(self) -> None:
+        item = fetch.item_from_pr(
+            {
+                "number": 10,
+                "title": "fix",
+                "url": "https://github.com/acme/tools/pull/10",
+                "createdAt": "2026-08-20T00:00:00Z",
+                "body": "Fixes #8",
+                "author": {"login": "contributor"},
+                "comments": {"pageInfo": {}, "nodes": []},
+                "reviews": {"nodes": []},
+                "commits": {"nodes": []},
+                "closingIssuesReferences": {
+                    "nodes": [
+                        {
+                            "number": 8,
+                            "title": "bug",
+                            "state": "OPEN",
+                            "body": "",
+                            "repository": None,
+                            "labels": {"nodes": [{"name": "ready-for-pr"}]},
+                            "comments": {"nodes": []},
+                        }
+                    ]
+                },
+            }
+        )
+        self.assertEqual(item.closing_issues[0]["nameWithOwner"], "")
+        self.assertEqual(fetch.ready_for_pr_closers(item, REPO), [])
+
+    def test_backfill_closing_issues_walks_pages(self) -> None:
+        from unittest.mock import patch
+
+        item = fetch.item_from_pr(
+            {
+                "number": 10,
+                "title": "fix",
+                "url": "https://github.com/acme/tools/pull/10",
+                "createdAt": "2026-08-20T00:00:00Z",
+                "body": "Fixes #1",
+                "author": {"login": "contributor"},
+                "comments": {"pageInfo": {}, "nodes": []},
+                "reviews": {"nodes": []},
+                "commits": {"nodes": []},
+                "closingIssuesReferences": {
+                    "pageInfo": {"hasNextPage": True, "endCursor": "c1"},
+                    "nodes": [
+                        {
+                            "number": 1,
+                            "title": "one",
+                            "state": "OPEN",
+                            "body": "",
+                            "repository": {"nameWithOwner": REPO},
+                            "labels": {"nodes": [{"name": "ready-for-pr"}]},
+                            "comments": {"nodes": []},
+                        }
+                    ],
+                },
+            }
+        )
+        page2 = {
+            "repository": {
+                "pullRequest": {
+                    "closingIssuesReferences": {
+                        "pageInfo": {"hasNextPage": False},
+                        "nodes": [
+                            {
+                                "number": 2,
+                                "title": "two",
+                                "state": "OPEN",
+                                "body": "",
+                                "repository": {"nameWithOwner": REPO},
+                                "labels": {"nodes": [{"name": "ready-for-pr"}]},
+                                "comments": {"nodes": []},
+                            }
+                        ],
+                    }
+                }
+            }
+        }
+        with patch.object(fetch, "gh_graphql", return_value=page2) as gql:
+            fetch.backfill_closing_issues(item, "acme", "tools")
+            self.assertEqual(gql.call_args.args[0], fetch.CLOSING_ISSUE_PAGE_QUERY)
+        self.assertEqual([issue["number"] for issue in item.closing_issues], [1, 2])
+        self.assertEqual(fetch.ready_for_pr_closers(item, REPO), [1, 2])
+
     def test_ready_for_pr_stamp_in_issue_body(self) -> None:
         row = classify(
             pr(
                 body="Closes: #4",
                 closing_issues=[
-                    {
-                        "number": 4,
-                        "labels": [],
-                        "body": "<!-- triage: 2026-08-19T23:40:00Z outcome=ready-for-pr -->",
-                        "comment_bodies": [],
-                    }
+                    closing_issue(
+                        4,
+                        labels=[],
+                        body="<!-- triage: 2026-08-19T23:40:00Z outcome=ready-for-pr -->",
+                    )
                 ],
             )
         )
@@ -889,9 +941,19 @@ class CliTests(unittest.TestCase):
         self.assertIn("before: $cursor, orderBy:", fetch.COMMENT_PAGE_QUERY)
         self.assertIn("number title state body", fetch.PR_LIST_QUERY)
         self.assertIn("repository { nameWithOwner }", fetch.PR_LIST_QUERY)
+        self.assertIn(
+            "closingIssuesReferences(first: 50, excludeUserLinked: true)",
+            fetch.PR_LIST_QUERY,
+        )
+        self.assertIn("excludeUserLinked: true", fetch.CLOSING_ISSUE_PAGE_QUERY)
         self.assertIn("message", fetch.PR_LIST_QUERY)
         self.assertIn("reviewThreads(last: 40, before: $cursor)", fetch.REVIEW_THREAD_PAGE_QUERY)
-        self.assertIn("comments(last: 30)", fetch.REVIEW_THREAD_PAGE_QUERY)
+        self.assertIn("comments(last: 100)", fetch.REVIEW_THREAD_PAGE_QUERY)
+        self.assertIn("hasPreviousPage startCursor", fetch.REVIEW_THREAD_PAGE_QUERY)
+        self.assertIn(
+            "comments(last: 100, before: $cursor)",
+            fetch.REVIEW_THREAD_COMMENT_PAGE_QUERY,
+        )
 
     def test_null_repository_exits_nonzero(self) -> None:
         from unittest.mock import patch
@@ -974,6 +1036,7 @@ class CliTests(unittest.TestCase):
 
         backfilled: list[int] = []
         review_backfilled: list[int] = []
+        closing_backfilled: list[int] = []
 
         def fake_comments(item, *_args):
             backfilled.append(item.number)
@@ -981,11 +1044,15 @@ class CliTests(unittest.TestCase):
         def fake_reviews(item, *_args):
             review_backfilled.append(item.number)
 
+        def fake_closing(item, *_args):
+            closing_backfilled.append(item.number)
+
         stdout = StringIO()
         with (
             patch.object(fetch, "paginate_nodes", side_effect=paginate),
             patch.object(fetch, "backfill_comments", side_effect=fake_comments),
             patch.object(fetch, "backfill_review_threads", side_effect=fake_reviews),
+            patch.object(fetch, "backfill_closing_issues", side_effect=fake_closing),
             patch.object(sys, "stdout", stdout),
         ):
             rc = fetch.main(
@@ -1001,6 +1068,7 @@ class CliTests(unittest.TestCase):
         self.assertEqual(rc, 0)
         self.assertEqual(backfilled, [2, 4])
         self.assertEqual(review_backfilled, [4])
+        self.assertEqual(closing_backfilled, [4])
         payload = json.loads(stdout.getvalue())
         self.assertEqual([row["number"] for row in payload["issues"]], [2])
         self.assertEqual([row["number"] for row in payload["prs"]], [4])

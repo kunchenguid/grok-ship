@@ -95,7 +95,8 @@ query($owner: String!, $name: String!, $cursor: String) {
             }
           }
         }
-        closingIssuesReferences(first: 10) {
+        closingIssuesReferences(first: 50, excludeUserLinked: true) {
+          pageInfo { hasNextPage endCursor }
           nodes {
             number title state body
             repository { nameWithOwner }
@@ -139,8 +140,43 @@ query($owner: String!, $name: String!, $number: Int!, $cursor: String) {
       reviewThreads(last: 40, before: $cursor) {
         pageInfo { hasPreviousPage startCursor }
         nodes {
-          comments(last: 30) {
+          id
+          comments(last: 100) {
+            pageInfo { hasPreviousPage startCursor }
             nodes { author { login } body createdAt }
+          }
+        }
+      }
+    }
+  }
+}
+"""
+
+REVIEW_THREAD_COMMENT_PAGE_QUERY = """
+query($id: ID!, $cursor: String) {
+  node(id: $id) {
+    ... on PullRequestReviewThread {
+      comments(last: 100, before: $cursor) {
+        pageInfo { hasPreviousPage startCursor }
+        nodes { author { login } body createdAt }
+      }
+    }
+  }
+}
+"""
+
+CLOSING_ISSUE_PAGE_QUERY = """
+query($owner: String!, $name: String!, $number: Int!, $cursor: String) {
+  repository(owner: $owner, name: $name) {
+    pullRequest(number: $number) {
+      closingIssuesReferences(first: 50, after: $cursor, excludeUserLinked: true) {
+        pageInfo { hasNextPage endCursor }
+        nodes {
+          number title state body
+          repository { nameWithOwner }
+          labels(first: 20) { nodes { name } }
+          comments(last: 20) {
+            nodes { body createdAt }
           }
         }
       }
@@ -191,9 +227,7 @@ def issue_is_open(issue: dict[str, Any]) -> bool:
 
 def linked_issue_in_repo(issue: dict[str, Any], repo: str) -> bool:
     name = (issue.get("nameWithOwner") or "").strip()
-    if not name:
-        return True
-    return name.lower() == repo.lower()
+    return bool(name) and name.lower() == repo.lower()
 
 
 def _ref_is_local(match: re.Match[str], repo: str | None) -> bool:
@@ -340,6 +374,8 @@ class Item:
     commit_messages: list[str] = field(default_factory=list)
     comment_cursor: str | None = None
     has_older_comments: bool = False
+    closing_cursor: str | None = None
+    has_more_closing: bool = False
 
 
 @dataclass(frozen=True)
@@ -486,6 +522,30 @@ def item_from_issue(node: dict[str, Any]) -> Item:
     )
 
 
+def _parse_closing_issues(nodes: Iterable[dict[str, Any]]) -> list[dict[str, Any]]:
+    closing: list[dict[str, Any]] = []
+    for issue in nodes:
+        comment_bodies = [
+            comment.get("body") or ""
+            for comment in (issue.get("comments") or {}).get("nodes") or []
+        ]
+        closing.append(
+            {
+                "number": issue.get("number"),
+                "title": issue.get("title") or "",
+                "state": issue.get("state"),
+                "body": issue.get("body") or "",
+                "labels": [
+                    label.get("name") or ""
+                    for label in (issue.get("labels") or {}).get("nodes") or []
+                ],
+                "comment_bodies": comment_bodies,
+                "nameWithOwner": ((issue.get("repository") or {}).get("nameWithOwner") or ""),
+            }
+        )
+    return closing
+
+
 def item_from_pr(node: dict[str, Any]) -> Item:
     comments = node.get("comments") or {}
     page = comments.get("pageInfo") or {}
@@ -523,26 +583,8 @@ def item_from_pr(node: dict[str, Any]) -> Item:
         activities.append(
             Activity(when=when, kind="commit", login=login, body=None)
         )
-    closing = []
-    for issue in (node.get("closingIssuesReferences") or {}).get("nodes") or []:
-        comment_bodies = [
-            comment.get("body") or ""
-            for comment in (issue.get("comments") or {}).get("nodes") or []
-        ]
-        closing.append(
-            {
-                "number": issue.get("number"),
-                "title": issue.get("title") or "",
-                "state": issue.get("state"),
-                "body": issue.get("body") or "",
-                "labels": [
-                    label.get("name") or ""
-                    for label in (issue.get("labels") or {}).get("nodes") or []
-                ],
-                "comment_bodies": comment_bodies,
-                "nameWithOwner": ((issue.get("repository") or {}).get("nameWithOwner") or ""),
-            }
-        )
+    closing_conn = node.get("closingIssuesReferences") or {}
+    closing_page = closing_conn.get("pageInfo") or {}
     return Item(
         number=int(node["number"]),
         title=node.get("title") or "",
@@ -552,10 +594,12 @@ def item_from_pr(node: dict[str, Any]) -> Item:
         body=node.get("body") or "",
         kind="pr",
         activities=activities,
-        closing_issues=closing,
+        closing_issues=_parse_closing_issues(closing_conn.get("nodes") or []),
         commit_messages=commit_messages,
         comment_cursor=page.get("startCursor"),
         has_older_comments=bool(page.get("hasPreviousPage")),
+        closing_cursor=closing_page.get("endCursor"),
+        has_more_closing=bool(closing_page.get("hasNextPage")),
     )
 
 
@@ -582,6 +626,48 @@ def backfill_comments(item: Item, repo_owner: str, repo_name: str) -> None:
         item.comment_cursor = cursor
 
 
+def backfill_closing_issues(item: Item, repo_owner: str, repo_name: str) -> None:
+    """Walk remaining keyword-closing refs (excludeUserLinked already applied)."""
+    if item.kind != "pr":
+        return
+    cursor = item.closing_cursor
+    while item.has_more_closing and cursor:
+        data = gh_graphql(
+            CLOSING_ISSUE_PAGE_QUERY,
+            {
+                "owner": repo_owner,
+                "name": repo_name,
+                "number": item.number,
+                "cursor": cursor,
+            },
+        )
+        pull = ((data.get("repository") or {}).get("pullRequest")) or {}
+        conn = pull.get("closingIssuesReferences") or {}
+        item.closing_issues.extend(_parse_closing_issues(conn.get("nodes") or []))
+        page = conn.get("pageInfo") or {}
+        item.has_more_closing = bool(page.get("hasNextPage"))
+        cursor = page.get("endCursor")
+        item.closing_cursor = cursor
+
+
+def _backfill_thread_comments(item: Item, thread: dict[str, Any]) -> None:
+    comments = thread.get("comments") or {}
+    item.activities.extend(_parse_comments(comments.get("nodes") or []))
+    page = comments.get("pageInfo") or {}
+    cursor = page.get("startCursor")
+    thread_id = thread.get("id")
+    while page.get("hasPreviousPage") and cursor and thread_id:
+        data = gh_graphql(
+            REVIEW_THREAD_COMMENT_PAGE_QUERY,
+            {"id": thread_id, "cursor": cursor},
+        )
+        node = data.get("node") or {}
+        comments = node.get("comments") or {}
+        item.activities.extend(_parse_comments(comments.get("nodes") or []))
+        page = comments.get("pageInfo") or {}
+        cursor = page.get("startCursor")
+
+
 def backfill_review_threads(item: Item, repo_owner: str, repo_name: str) -> None:
     """Inline review-thread replies, including author answers on the diff."""
     if item.kind != "pr":
@@ -600,8 +686,7 @@ def backfill_review_threads(item: Item, repo_owner: str, repo_name: str) -> None
         pull = ((data.get("repository") or {}).get("pullRequest")) or {}
         conn = pull.get("reviewThreads") or {}
         for thread in conn.get("nodes") or []:
-            comments = (thread.get("comments") or {}).get("nodes") or []
-            item.activities.extend(_parse_comments(comments))
+            _backfill_thread_comments(item, thread)
         page = conn.get("pageInfo") or {}
         if not page.get("hasPreviousPage"):
             break
@@ -709,6 +794,7 @@ def main(argv: list[str] | None = None) -> int:
     for item in issues + prs:
         backfill_comments(item, repo_owner, repo_name)
     for item in prs:
+        backfill_closing_issues(item, repo_owner, repo_name)
         backfill_review_threads(item, repo_owner, repo_name)
 
     classified_issues = [
