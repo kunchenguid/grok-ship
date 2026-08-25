@@ -11,6 +11,7 @@ Close contributor pull requests that have been waiting on the author past the st
 
 Read these from the triage charter or the invocation. Do not hardcode them.
 
+- `repo` — `OWNER/NAME` of the target repository. Required on every `gh` call. Do not clone.
 - `owner` — GitHub login of the repo owner. Never close that login's PRs except a last-resort port whose original is also stale (or already closed).
 - `disclosure-line` — the exact first line of the required close comment.
 - `stale-days` — default 14.
@@ -47,7 +48,7 @@ The close comment must start with the `disclosure-line` parameter, explain the s
 <!-- triage: <ISO8601> outcome=closed-stale-<stale-days>d -->
 ```
 
-Use `gh pr close <n> --comment "<body>"` on the target repo. Do not delete the branch unless the charter says to.
+Use `gh pr close <n> --repo <OWNER/NAME> --comment "<body>"`. Do not omit `--repo`. Do not clone the target repo. Do not delete the branch unless the charter says to.
 
 ## Do not
 

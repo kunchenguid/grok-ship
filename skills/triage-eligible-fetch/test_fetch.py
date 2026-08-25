@@ -129,6 +129,8 @@ class SkipTests(unittest.TestCase):
             text = path.read_text().lower()
             self.assertNotIn("kunchenguid", text, path)
             self.assertNotIn("kun's firstmate", text, path)
+        close_skill = pack_root / "skills/14-day-stale-pr-close/SKILL.md"
+        self.assertIn("gh pr close <n> --repo <OWNER/NAME> --comment", close_skill.read_text())
 
 
 class ClockTests(unittest.TestCase):
@@ -324,6 +326,72 @@ class RankTests(unittest.TestCase):
         self.assertEqual(fetch.closing_issue_numbers("Closes #2\nResolves #3"), [2, 3])
         self.assertEqual(fetch.closing_issue_numbers("Closes: #8"), [8])
         self.assertEqual(fetch.closing_issue_numbers("Fixes: #9"), [9])
+        self.assertEqual(fetch.closing_issue_numbers("Closing #8"), [8])
+        self.assertEqual(fetch.closing_issue_numbers("Resolving #9"), [9])
+        self.assertEqual(fetch.closing_issue_numbers("Fixes #1, #2"), [1, 2])
+        self.assertEqual(fetch.closing_issue_numbers("Fixes #1 and #2"), [1, 2])
+        self.assertEqual(fetch.closing_issue_numbers("Fixes #1, #2, and #3"), [1, 2, 3])
+
+    def test_closing_keyword_uses_github_linked_list(self) -> None:
+        row = classify(
+            pr(
+                body="Closing this now.",
+                closing_issues=[
+                    {
+                        "number": 8,
+                        "labels": ["ready-for-pr"],
+                        "body": "",
+                        "comment_bodies": [],
+                    }
+                ],
+            )
+        )
+        self.assertIsNotNone(row)
+        assert row is not None
+        self.assertEqual(row.closes_ready, [8])
+
+    def test_commit_message_closing_keyword_counts(self) -> None:
+        row = classify(
+            pr(
+                body="no keywords in the body",
+                commit_messages=["Fixes #9"],
+                closing_issues=[
+                    {
+                        "number": 9,
+                        "labels": ["ready-for-pr"],
+                        "body": "",
+                        "comment_bodies": [],
+                    }
+                ],
+            )
+        )
+        self.assertIsNotNone(row)
+        assert row is not None
+        self.assertEqual(row.closes_ready, [9])
+
+    def test_fixes_list_keeps_every_ready_issue(self) -> None:
+        row = classify(
+            pr(
+                body="Fixes #1, #2",
+                closing_issues=[
+                    {
+                        "number": 1,
+                        "labels": ["ready-for-pr"],
+                        "body": "",
+                        "comment_bodies": [],
+                    },
+                    {
+                        "number": 2,
+                        "labels": ["ready-for-pr"],
+                        "body": "",
+                        "comment_bodies": [],
+                    },
+                ],
+            )
+        )
+        self.assertIsNotNone(row)
+        assert row is not None
+        self.assertEqual(row.closes_ready, [1, 2])
 
     def test_graphql_manual_link_without_keyword_is_not_a_closer(self) -> None:
         row = classify(
@@ -422,6 +490,42 @@ class CliTests(unittest.TestCase):
         )
         self.assertIn("before: $cursor, orderBy:", fetch.COMMENT_PAGE_QUERY)
         self.assertIn("number title state body", fetch.PR_LIST_QUERY)
+        self.assertIn("message", fetch.PR_LIST_QUERY)
+
+    def test_null_repository_exits_nonzero(self) -> None:
+        from unittest.mock import patch
+
+        with patch.object(
+            fetch, "gh_graphql", return_value={"repository": None}
+        ):
+            with self.assertRaises(SystemExit) as ctx:
+                fetch.paginate_nodes(
+                    fetch.ISSUE_LIST_QUERY, "nope", "missing", "issues"
+                )
+        self.assertIn("not found", str(ctx.exception).lower())
+        self.assertIn("nope/missing", str(ctx.exception))
+
+    def test_empty_repository_is_not_an_error(self) -> None:
+        from unittest.mock import patch
+
+        with patch.object(
+            fetch,
+            "gh_graphql",
+            return_value={
+                "repository": {
+                    "issues": {
+                        "nodes": [],
+                        "pageInfo": {"hasNextPage": False},
+                    }
+                }
+            },
+        ):
+            self.assertEqual(
+                fetch.paginate_nodes(
+                    fetch.ISSUE_LIST_QUERY, "acme", "tools", "issues"
+                ),
+                [],
+            )
 
 
 if __name__ == "__main__":

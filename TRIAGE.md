@@ -39,7 +39,7 @@ ready-for-pr issues: help existing PRs that close them. Do not open implementati
 
 ## Stale close
 
-Run `skills/14-day-stale-pr-close` with the charter owner, disclosure line, and stale days (default 14). Firstmate-mark and bot comments do not reset the author clock. Do not close CLEAN/mergeable PRs, captain holds, last-resort ports unless the original is also stale or closed, or security items that still need a captain flag.
+Run `skills/14-day-stale-pr-close` with the charter repo `OWNER/NAME`, owner, disclosure line, and stale days (default 14). Close with `gh pr close <n> --repo <OWNER/NAME> --comment "..."`. Do not clone. Firstmate-mark and bot comments do not reset the author clock. Do not close CLEAN/mergeable PRs, captain holds, last-resort ports unless the original is also stale or closed, or security items that still need a captain flag.
 
 ## Voice and stamps
 

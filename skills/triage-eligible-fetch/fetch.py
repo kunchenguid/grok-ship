@@ -25,8 +25,16 @@ STAMP_RE = re.compile(
 )
 OUTCOME_RE = re.compile(r"outcome=([A-Za-z0-9_.-]+)", re.IGNORECASE)
 LAST_RESORT_RE = re.compile(r"Last-resort port of #(\d+)", re.IGNORECASE)
-CLOSING_RE = re.compile(
-    r"(?i)\b(fix(?:es|ed)?|close[sd]?|resolve[sd]?):?\s+"
+CLOSING_KEYWORD_RE = re.compile(
+    r"(?i)\b(?:fix(?:es|ed|ing)?|clos(?:e|es|ed|ing)|resolv(?:e|es|ed|ing))\b"
+)
+CLOSING_LIST_RE = re.compile(
+    r"(?i)\b(?:fix(?:es|ed|ing)?|clos(?:e|es|ed|ing)|resolv(?:e|es|ed|ing)):?\s*"
+    r"(?P<list>(?:https://github\.com/[^/\s]+/[^/\s]+/issues/|#)\d+"
+    r"(?:(?:\s*,?\s+and\s+|\s*[,;&/]\s*|\s+)"
+    r"(?:https://github\.com/[^/\s]+/[^/\s]+/issues/|#)\d+)*)"
+)
+ISSUE_REF_RE = re.compile(
     r"(?:https://github\.com/[^/\s]+/[^/\s]+/issues/|#)(\d+)"
 )
 AUTOMATION_MARKERS = (
@@ -75,6 +83,7 @@ query($owner: String!, $name: String!, $cursor: String) {
         commits(last: 20) {
           nodes {
             commit {
+              message
               committedDate
               authors(first: 5) { nodes { user { login } } }
             }
@@ -177,15 +186,22 @@ def has_ready_for_pr(labels: Iterable[str], texts: Iterable[str | None]) -> bool
     return bool(stamp and stamp[1] and stamp[1].lower() == "ready-for-pr")
 
 
-def closing_issue_numbers(body: str | None) -> list[int]:
+def closing_issue_numbers(*texts: str | None) -> list[int]:
     numbers: list[int] = []
     seen: set[int] = set()
-    for match in CLOSING_RE.finditer(body or ""):
-        number = int(match.group(2))
-        if number not in seen:
-            seen.add(number)
-            numbers.append(number)
+    blob = "\n".join(text for text in texts if text)
+    for match in CLOSING_LIST_RE.finditer(blob):
+        for ref in ISSUE_REF_RE.finditer(match.group("list")):
+            number = int(ref.group(1))
+            if number not in seen:
+                seen.add(number)
+                numbers.append(number)
     return numbers
+
+
+def has_closing_keyword(*texts: str | None) -> bool:
+    blob = "\n".join(text for text in texts if text)
+    return bool(CLOSING_KEYWORD_RE.search(blob))
 
 
 def is_firstmate_text(text: str | None, firstmate_mark: str) -> bool:
@@ -195,9 +211,27 @@ def is_firstmate_text(text: str | None, firstmate_mark: str) -> bool:
 
 
 def ready_for_pr_closers(item: Item) -> list[int]:
-    """PRs that close a ready-for-pr issue via Fixes/Closes/Resolves only."""
-    parsed = closing_issue_numbers(item.body)
-    if not parsed:
+    """PRs that close a ready-for-pr issue via Fixes/Closes/Resolves (and Closing/Resolving)."""
+    texts = (item.body, *item.commit_messages)
+    parsed = closing_issue_numbers(*texts)
+    candidates: list[int] = []
+    seen: set[int] = set()
+
+    def add(number: int) -> None:
+        if number not in seen:
+            seen.add(number)
+            candidates.append(number)
+
+    for number in parsed:
+        add(number)
+    # After a closing keyword, use GitHub's linked issue list too (commit
+    # messages and multi-issue lists the body parser might still miss).
+    if has_closing_keyword(*texts):
+        for issue in item.closing_issues:
+            number = issue.get("number")
+            if number is not None:
+                add(int(number))
+    if not candidates:
         return []
     by_number: dict[int, dict[str, Any]] = {}
     for issue in item.closing_issues:
@@ -206,12 +240,12 @@ def ready_for_pr_closers(item: Item) -> list[int]:
             continue
         by_number[int(number)] = issue
     ready: list[int] = []
-    for number in parsed:
+    for number in candidates:
         issue = by_number.get(number)
         if issue is None:
             continue
-        texts = [issue.get("body"), *(issue.get("comment_bodies") or [])]
-        if has_ready_for_pr(issue.get("labels") or [], texts):
+        issue_texts = [issue.get("body"), *(issue.get("comment_bodies") or [])]
+        if has_ready_for_pr(issue.get("labels") or [], issue_texts):
             ready.append(number)
     return ready
 
@@ -236,6 +270,7 @@ class Item:
     labels: list[str] = field(default_factory=list)
     activities: list[Activity] = field(default_factory=list)
     closing_issues: list[dict[str, Any]] = field(default_factory=list)
+    commit_messages: list[str] = field(default_factory=list)
     comment_cursor: str | None = None
     has_older_comments: bool = False
 
@@ -389,6 +424,7 @@ def item_from_pr(node: dict[str, Any]) -> Item:
     comments = node.get("comments") or {}
     page = comments.get("pageInfo") or {}
     activities = _parse_comments(comments.get("nodes") or [])
+    commit_messages: list[str] = []
     for review in (node.get("reviews") or {}).get("nodes") or []:
         try:
             when = parse_iso(review["createdAt"])
@@ -404,6 +440,9 @@ def item_from_pr(node: dict[str, Any]) -> Item:
         )
     for commit_node in (node.get("commits") or {}).get("nodes") or []:
         commit = (commit_node or {}).get("commit") or {}
+        message = commit.get("message") or ""
+        if message:
+            commit_messages.append(message)
         try:
             when = parse_iso(commit["committedDate"])
         except (KeyError, TypeError, ValueError):
@@ -447,6 +486,7 @@ def item_from_pr(node: dict[str, Any]) -> Item:
         kind="pr",
         activities=activities,
         closing_issues=closing,
+        commit_messages=commit_messages,
         comment_cursor=page.get("startCursor"),
         has_older_comments=bool(page.get("hasPreviousPage")),
     )
@@ -484,7 +524,12 @@ def paginate_nodes(
         data = gh_graphql(
             query, {"owner": repo_owner, "name": repo_name, "cursor": cursor}
         )
-        conn = ((data.get("repository") or {}).get(field)) or {}
+        repo = data.get("repository")
+        if repo is None:
+            raise SystemExit(
+                f"repository not found or inaccessible: {repo_owner}/{repo_name}"
+            )
+        conn = repo.get(field) or {}
         nodes.extend(conn.get("nodes") or [])
         page = conn.get("pageInfo") or {}
         if not page.get("hasNextPage"):

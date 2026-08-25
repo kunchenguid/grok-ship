@@ -52,7 +52,7 @@ Security: flag Firstmate immediately. Default-behavior: flag Firstmate only when
 
 Corrective and opt-in work may auto-merge on a standing triage wake. Factory ships (the GROK_BOT_CREWMATE.md path, including when this charter's factory addendum is in force) still need the captain's word — never auto-merge those from triage.
 
-Run the 14-day stale PR close skill with the charter owner, disclosure line, and stale days.
+Run the 14-day stale PR close skill with the charter repo `OWNER/NAME`, owner, disclosure line, and stale days. Close with `gh pr close <n> --repo <OWNER/NAME> --comment "..."`. Do not clone.
 
 ready-for-pr issues: help existing PRs. Do not open implementation PRs from triage.
 
