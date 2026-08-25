@@ -18,6 +18,7 @@ SPEC.loader.exec_module(fetch)
 
 NOW = datetime(2026, 8, 25, 12, 0, tzinfo=timezone.utc)
 OWNER = "repo-owner"
+REPO = "acme/tools"
 MARK = "Speaking as Firstmate"
 
 
@@ -54,7 +55,7 @@ def pr(**kwargs) -> fetch.Item:
 
 
 def classify(item: fetch.Item, **kwargs) -> fetch.Classified | None:
-    params = dict(owner=OWNER, firstmate_mark=MARK, stale_days=14, now=NOW)
+    params = dict(owner=OWNER, firstmate_mark=MARK, stale_days=14, now=NOW, repo=REPO)
     params.update(kwargs)
     return fetch.classify_item(item, **params)
 
@@ -482,8 +483,28 @@ class RankTests(unittest.TestCase):
         self.assertEqual(fetch.closing_issue_numbers("Fixes #1, #2"), [1, 2])
         self.assertEqual(fetch.closing_issue_numbers("Fixes #1 and #2"), [1, 2])
         self.assertEqual(fetch.closing_issue_numbers("Fixes #1, #2, and #3"), [1, 2, 3])
+        self.assertEqual(
+            fetch.closing_issue_numbers("Fixes acme/tools#8", repo=REPO), [8]
+        )
+        self.assertEqual(
+            fetch.closing_issue_numbers(
+                "Fixes https://github.com/acme/tools/issues/8", repo=REPO
+            ),
+            [8],
+        )
+        self.assertEqual(
+            fetch.closing_issue_numbers("Fixes other/repo#8", repo=REPO), []
+        )
+        self.assertEqual(
+            fetch.closing_issue_numbers(
+                "Fixes https://github.com/other/repo/issues/8", repo=REPO
+            ),
+            [],
+        )
+        self.assertEqual(fetch.closing_issue_numbers("fix: handle the crash"), [])
+        self.assertEqual(fetch.closing_issue_numbers("Closing this now."), [])
 
-    def test_closing_keyword_uses_github_linked_list(self) -> None:
+    def test_bare_fix_word_is_not_a_closer(self) -> None:
         row = classify(
             pr(
                 body="Closing this now.",
@@ -499,7 +520,55 @@ class RankTests(unittest.TestCase):
         )
         self.assertIsNotNone(row)
         assert row is not None
-        self.assertEqual(row.closes_ready, [8])
+        self.assertEqual(row.closes_ready, [])
+        conventional = classify(
+            pr(
+                body="fix: handle the crash",
+                commit_messages=["fix: handle the crash"],
+                closing_issues=[
+                    {
+                        "number": 8,
+                        "state": "OPEN",
+                        "nameWithOwner": REPO,
+                        "labels": ["ready-for-pr"],
+                        "body": "",
+                        "comment_bodies": [],
+                    }
+                ],
+            )
+        )
+        self.assertIsNotNone(conventional)
+        assert conventional is not None
+        self.assertEqual(conventional.closes_ready, [])
+        self.assertNotEqual(
+            fetch.serialize(conventional).get("reason"), "ready-for-pr-closer"
+        )
+
+    def test_keyword_with_ref_uses_github_linked_list(self) -> None:
+        row = classify(
+            pr(
+                body="Fixes #1",
+                closing_issues=[
+                    {
+                        "number": 1,
+                        "nameWithOwner": REPO,
+                        "labels": ["ready-for-pr"],
+                        "body": "",
+                        "comment_bodies": [],
+                    },
+                    {
+                        "number": 2,
+                        "nameWithOwner": REPO,
+                        "labels": ["ready-for-pr"],
+                        "body": "",
+                        "comment_bodies": [],
+                    },
+                ],
+            )
+        )
+        self.assertIsNotNone(row)
+        assert row is not None
+        self.assertEqual(row.closes_ready, [1, 2])
 
     def test_commit_message_closing_keyword_counts(self) -> None:
         row = classify(
@@ -628,6 +697,118 @@ class RankTests(unittest.TestCase):
         assert row is not None
         self.assertEqual(row.closes_ready, [2])
 
+    def test_cross_repo_closing_ref_is_not_local(self) -> None:
+        foreign_url = classify(
+            pr(
+                body="Fixes https://github.com/other/repo/issues/8",
+                closing_issues=[
+                    {
+                        "number": 8,
+                        "state": "OPEN",
+                        "nameWithOwner": REPO,
+                        "labels": ["ready-for-pr"],
+                        "body": "",
+                        "comment_bodies": [],
+                    }
+                ],
+            )
+        )
+        self.assertIsNotNone(foreign_url)
+        assert foreign_url is not None
+        self.assertEqual(foreign_url.closes_ready, [])
+        shorthand = classify(
+            pr(
+                body="Fixes other/repo#8",
+                closing_issues=[
+                    {
+                        "number": 8,
+                        "state": "OPEN",
+                        "nameWithOwner": "other/repo",
+                        "labels": ["ready-for-pr"],
+                        "body": "",
+                        "comment_bodies": [],
+                    }
+                ],
+            )
+        )
+        self.assertIsNotNone(shorthand)
+        assert shorthand is not None
+        self.assertEqual(shorthand.closes_ready, [])
+        mixed = classify(
+            pr(
+                body="Fixes #1",
+                closing_issues=[
+                    {
+                        "number": 1,
+                        "state": "OPEN",
+                        "nameWithOwner": REPO,
+                        "labels": ["ready-for-pr"],
+                        "body": "",
+                        "comment_bodies": [],
+                    },
+                    {
+                        "number": 1,
+                        "state": "OPEN",
+                        "nameWithOwner": "other/repo",
+                        "labels": ["ready-for-pr"],
+                        "body": "",
+                        "comment_bodies": [],
+                    },
+                ],
+            )
+        )
+        self.assertIsNotNone(mixed)
+        assert mixed is not None
+        self.assertEqual(mixed.closes_ready, [1])
+        same_repo = classify(
+            pr(
+                body="Fixes acme/tools#4",
+                closing_issues=[
+                    {
+                        "number": 4,
+                        "state": "OPEN",
+                        "nameWithOwner": "Acme/Tools",
+                        "labels": ["ready-for-pr"],
+                        "body": "",
+                        "comment_bodies": [],
+                    }
+                ],
+            )
+        )
+        self.assertIsNotNone(same_repo)
+        assert same_repo is not None
+        self.assertEqual(same_repo.closes_ready, [4])
+
+    def test_item_from_pr_keeps_linked_issue_repo(self) -> None:
+        item = fetch.item_from_pr(
+            {
+                "number": 10,
+                "title": "fix",
+                "url": "https://github.com/acme/tools/pull/10",
+                "createdAt": "2026-08-20T00:00:00Z",
+                "body": "Fixes #8",
+                "author": {"login": "contributor"},
+                "comments": {"pageInfo": {}, "nodes": []},
+                "reviews": {"nodes": []},
+                "commits": {"nodes": []},
+                "closingIssuesReferences": {
+                    "nodes": [
+                        {
+                            "number": 8,
+                            "title": "bug",
+                            "state": "OPEN",
+                            "body": "",
+                            "repository": {"nameWithOwner": "other/repo"},
+                            "labels": {"nodes": [{"name": "ready-for-pr"}]},
+                            "comments": {"nodes": []},
+                        }
+                    ]
+                },
+            }
+        )
+        self.assertEqual(item.closing_issues[0]["nameWithOwner"], "other/repo")
+        self.assertEqual(fetch.ready_for_pr_closers(item, REPO), [])
+
     def test_ready_for_pr_stamp_in_issue_body(self) -> None:
         row = classify(
             pr(
@@ -696,6 +877,7 @@ class CliTests(unittest.TestCase):
         )
         self.assertIn("before: $cursor, orderBy:", fetch.COMMENT_PAGE_QUERY)
         self.assertIn("number title state body", fetch.PR_LIST_QUERY)
+        self.assertIn("repository { nameWithOwner }", fetch.PR_LIST_QUERY)
         self.assertIn("message", fetch.PR_LIST_QUERY)
         self.assertIn("reviewThreads(last: 40, before: $cursor)", fetch.REVIEW_THREAD_PAGE_QUERY)
         self.assertIn("comments(last: 30)", fetch.REVIEW_THREAD_PAGE_QUERY)

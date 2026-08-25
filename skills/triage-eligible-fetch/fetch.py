@@ -27,17 +27,20 @@ STAMP_RE = re.compile(
 )
 OUTCOME_RE = re.compile(r"outcome=([A-Za-z0-9_.-]+)", re.IGNORECASE)
 LAST_RESORT_RE = re.compile(r"Last-resort port of #(\d+)", re.IGNORECASE)
-CLOSING_KEYWORD_RE = re.compile(
-    r"(?i)\b(?:fix(?:es|ed|ing)?|clos(?:e|es|ed|ing)|resolv(?:e|es|ed|ing))\b"
+_ISSUE_REF_TOKEN = (
+    r"(?:https://github\.com/[^/\s]+/[^/\s]+/issues/"
+    r"|(?:[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)?#)\d+"
 )
 CLOSING_LIST_RE = re.compile(
     r"(?i)\b(?:fix(?:es|ed|ing)?|clos(?:e|es|ed|ing)|resolv(?:e|es|ed|ing)):?\s*"
-    r"(?P<list>(?:https://github\.com/[^/\s]+/[^/\s]+/issues/|#)\d+"
-    r"(?:(?:\s*,?\s+and\s+|\s*[,;&/]\s*|\s+)"
-    r"(?:https://github\.com/[^/\s]+/[^/\s]+/issues/|#)\d+)*)"
+    rf"(?P<list>{_ISSUE_REF_TOKEN}"
+    rf"(?:(?:\s*,?\s+and\s+|\s*[,;&/]\s*|\s+){_ISSUE_REF_TOKEN})*)"
 )
 ISSUE_REF_RE = re.compile(
-    r"(?:https://github\.com/[^/\s]+/[^/\s]+/issues/|#)(\d+)"
+    r"(?:https://github\.com/(?P<url_owner>[^/\s]+)/(?P<url_name>[^/\s]+)/issues/"
+    r"|(?:(?P<ref_owner>[A-Za-z0-9_.-]+)/(?P<ref_name>[A-Za-z0-9_.-]+))?#)"
+    r"(?P<number>\d+)",
+    re.IGNORECASE,
 )
 AUTOMATION_MARKERS = (
     "dependabot",
@@ -95,6 +98,7 @@ query($owner: String!, $name: String!, $cursor: String) {
         closingIssuesReferences(first: 10) {
           nodes {
             number title state body
+            repository { nameWithOwner }
             labels(first: 20) { nodes { name } }
             comments(last: 20) {
               nodes { body createdAt }
@@ -185,6 +189,23 @@ def issue_is_open(issue: dict[str, Any]) -> bool:
     return (issue.get("state") or "OPEN").upper() == "OPEN"
 
 
+def linked_issue_in_repo(issue: dict[str, Any], repo: str) -> bool:
+    name = (issue.get("nameWithOwner") or "").strip()
+    if not name:
+        return True
+    return name.lower() == repo.lower()
+
+
+def _ref_is_local(match: re.Match[str], repo: str | None) -> bool:
+    owner = match.group("url_owner") or match.group("ref_owner")
+    name = match.group("url_name") or match.group("ref_name")
+    if not owner or not name:
+        return True
+    if not repo:
+        return False
+    return f"{owner}/{name}".lower() == repo.lower()
+
+
 def find_stamps(text: str | None) -> list[tuple[datetime, str | None]]:
     stamps: list[tuple[datetime, str | None]] = []
     if not text:
@@ -217,22 +238,19 @@ def has_ready_for_pr(labels: Iterable[str], texts: Iterable[str | None]) -> bool
     return bool(stamp and stamp[1] and stamp[1].lower() == "ready-for-pr")
 
 
-def closing_issue_numbers(*texts: str | None) -> list[int]:
+def closing_issue_numbers(*texts: str | None, repo: str | None = None) -> list[int]:
     numbers: list[int] = []
     seen: set[int] = set()
     blob = "\n".join(text for text in texts if text)
     for match in CLOSING_LIST_RE.finditer(blob):
         for ref in ISSUE_REF_RE.finditer(match.group("list")):
-            number = int(ref.group(1))
+            if not _ref_is_local(ref, repo):
+                continue
+            number = int(ref.group("number"))
             if number not in seen:
                 seen.add(number)
                 numbers.append(number)
     return numbers
-
-
-def has_closing_keyword(*texts: str | None) -> bool:
-    blob = "\n".join(text for text in texts if text)
-    return bool(CLOSING_KEYWORD_RE.search(blob))
 
 
 def is_firstmate_text(text: str | None, firstmate_mark: str) -> bool:
@@ -250,10 +268,10 @@ def is_clock_noise(activity: Activity, firstmate_mark: str) -> bool:
     return is_firstmate_text(activity.body, firstmate_mark)
 
 
-def ready_for_pr_closers(item: Item) -> list[int]:
+def ready_for_pr_closers(item: Item, repo: str) -> list[int]:
     """PRs that close a ready-for-pr issue via Fixes/Closes/Resolves (and Closing/Resolving)."""
     texts = (item.body, *item.commit_messages)
-    parsed = closing_issue_numbers(*texts)
+    parsed = closing_issue_numbers(*texts, repo=repo)
     candidates: list[int] = []
     seen: set[int] = set()
 
@@ -264,19 +282,28 @@ def ready_for_pr_closers(item: Item) -> list[int]:
 
     for number in parsed:
         add(number)
-    # After a closing keyword, use GitHub's linked issue list too (commit
-    # messages and multi-issue lists the body parser might still miss).
-    if has_closing_keyword(*texts):
+    # After a closing keyword with an issue ref, use GitHub's same-repo
+    # linked issue list too (commit messages and multi-issue lists the
+    # body parser might still miss). Bare fix/close/resolve is not enough.
+    if parsed:
         for issue in item.closing_issues:
             number = issue.get("number")
-            if number is not None and issue_is_open(issue):
+            if (
+                number is not None
+                and issue_is_open(issue)
+                and linked_issue_in_repo(issue, repo)
+            ):
                 add(int(number))
     if not candidates:
         return []
     by_number: dict[int, dict[str, Any]] = {}
     for issue in item.closing_issues:
         number = issue.get("number")
-        if number is None or not issue_is_open(issue):
+        if (
+            number is None
+            or not issue_is_open(issue)
+            or not linked_issue_in_repo(issue, repo)
+        ):
             continue
         by_number[int(number)] = issue
     ready: list[int] = []
@@ -331,6 +358,7 @@ def classify_item(
     firstmate_mark: str,
     stale_days: int,
     now: datetime,
+    repo: str,
 ) -> Classified | None:
     if is_automation(item.author):
         return None
@@ -352,7 +380,7 @@ def classify_item(
 
     closes_ready: list[int] = []
     if item.kind == "pr":
-        closes_ready = ready_for_pr_closers(item)
+        closes_ready = ready_for_pr_closers(item, repo)
 
     if stamp is None:
         return Classified(item, "unstamped", None, None, closes_ready)
@@ -512,6 +540,7 @@ def item_from_pr(node: dict[str, Any]) -> Item:
                     for label in (issue.get("labels") or {}).get("nodes") or []
                 ],
                 "comment_bodies": comment_bodies,
+                "nameWithOwner": ((issue.get("repository") or {}).get("nameWithOwner") or ""),
             }
         )
     return Item(
@@ -691,6 +720,7 @@ def main(argv: list[str] | None = None) -> int:
                 firstmate_mark=args.firstmate_mark,
                 stale_days=args.stale_days,
                 now=now,
+                repo=args.repo,
             )
             for item in issues
         )
@@ -705,6 +735,7 @@ def main(argv: list[str] | None = None) -> int:
                 firstmate_mark=args.firstmate_mark,
                 stale_days=args.stale_days,
                 now=now,
+                repo=args.repo,
             )
             for item in prs
         )
