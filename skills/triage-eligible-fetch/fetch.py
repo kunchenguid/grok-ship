@@ -26,7 +26,7 @@ STAMP_RE = re.compile(
 OUTCOME_RE = re.compile(r"outcome=([A-Za-z0-9_.-]+)", re.IGNORECASE)
 LAST_RESORT_RE = re.compile(r"Last-resort port of #(\d+)", re.IGNORECASE)
 CLOSING_RE = re.compile(
-    r"(?i)\b(fix(?:es|ed)?|close[sd]?|resolve[sd]?)\s+"
+    r"(?i)\b(fix(?:es|ed)?|close[sd]?|resolve[sd]?):?\s+"
     r"(?:https://github\.com/[^/\s]+/[^/\s]+/issues/|#)(\d+)"
 )
 AUTOMATION_MARKERS = (
@@ -82,7 +82,7 @@ query($owner: String!, $name: String!, $cursor: String) {
         }
         closingIssuesReferences(first: 10) {
           nodes {
-            number title state
+            number title state body
             labels(first: 20) { nodes { name } }
             comments(last: 20) {
               nodes { body createdAt }
@@ -100,13 +100,13 @@ query($owner: String!, $name: String!, $number: Int!, $cursor: String) {
   repository(owner: $owner, name: $name) {
     issueOrPullRequest(number: $number) {
       ... on Issue {
-        comments(last: 50, before: $cursor) {
+        comments(last: 50, before: $cursor, orderBy: {field: UPDATED_AT, direction: ASC}) {
           pageInfo { hasPreviousPage startCursor }
           nodes { author { login } body createdAt }
         }
       }
       ... on PullRequest {
-        comments(last: 50, before: $cursor) {
+        comments(last: 50, before: $cursor, orderBy: {field: UPDATED_AT, direction: ASC}) {
           pageInfo { hasPreviousPage startCursor }
           nodes { author { login } body createdAt }
         }
@@ -191,7 +191,7 @@ def closing_issue_numbers(body: str | None) -> list[int]:
 def is_firstmate_text(text: str | None, firstmate_mark: str) -> bool:
     if not text or not firstmate_mark:
         return False
-    return firstmate_mark.lower() in text.lower()
+    return text.lstrip().lower().startswith(firstmate_mark.lower())
 
 
 def ready_for_pr_closers(item: Item) -> list[int]:
@@ -452,30 +452,10 @@ def item_from_pr(node: dict[str, Any]) -> Item:
     )
 
 
-def backfill_comments(
-    item: Item, repo_owner: str, repo_name: str, firstmate_mark: str
-) -> None:
-    """Walk older comments until a stamp or a non-firstmate comment appears."""
+def backfill_comments(item: Item, repo_owner: str, repo_name: str) -> None:
+    """Walk older UPDATED_AT comment pages. Do not stop because the newest page already has a stamp."""
     cursor = item.comment_cursor
     while item.has_older_comments and cursor:
-        stamp = latest_stamp(
-            [item.body, *(activity.body for activity in item.activities)]
-        )
-        newest_unseen_would_matter = True
-        if stamp is not None:
-            # Already have the latest stamp from the newest page; older pages
-            # cannot produce a newer stamp.
-            newest_unseen_would_matter = False
-        else:
-            has_real = any(
-                not is_firstmate_text(activity.body, firstmate_mark)
-                for activity in item.activities
-                if activity.kind == "comment"
-            )
-            if has_real:
-                newest_unseen_would_matter = False
-        if not newest_unseen_would_matter:
-            return
         data = gh_graphql(
             COMMENT_PAGE_QUERY,
             {
@@ -560,7 +540,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--firstmate-mark",
         required=True,
-        help="Substring that marks firstmate comments so they do not reset the clock",
+        help="Text that must start a firstmate comment so those comments do not reset the clock",
     )
     parser.add_argument("--stale-days", type=int, default=14)
     parser.add_argument("--issues", type=int, default=5, help="Issue cap (default 5)")
@@ -579,7 +559,7 @@ def main(argv: list[str] | None = None) -> int:
     issues = [item_from_issue(node) for node in issue_nodes]
     prs = [item_from_pr(node) for node in pr_nodes]
     for item in issues + prs:
-        backfill_comments(item, repo_owner, repo_name, args.firstmate_mark)
+        backfill_comments(item, repo_owner, repo_name)
 
     classified_issues = [
         row

@@ -156,6 +156,33 @@ class ClockTests(unittest.TestCase):
         )
         self.assertIsNone(row)
 
+    def test_quoted_disclosure_is_not_firstmate_chatter(self) -> None:
+        self.assertTrue(fetch.is_firstmate_text(f"{MARK}: still waiting.", MARK))
+        self.assertFalse(
+            fetch.is_firstmate_text(
+                f"Got it.\n\n> {MARK}: please push a fix\n\nPushed.",
+                MARK,
+            )
+        )
+        stamp_at = NOW - timedelta(days=1)
+        body = f"<!-- triage: {stamp_at.strftime('%Y-%m-%dT%H:%M:%SZ')} outcome=waiting-author -->"
+        row = classify(
+            issue(
+                activities=[
+                    activity(stamp_at, "comment", body, OWNER),
+                    activity(
+                        NOW - timedelta(hours=1),
+                        "comment",
+                        f"Re: {MARK}: I pushed a fix.",
+                        "contributor",
+                    ),
+                ]
+            )
+        )
+        self.assertIsNotNone(row)
+        assert row is not None
+        self.assertEqual(row.bucket, "live")
+
     def test_stale_restamp_after_stale_days(self) -> None:
         stamp_at = NOW - timedelta(days=14)
         body = f"<!-- triage: {stamp_at.strftime('%Y-%m-%dT%H:%M:%SZ')} outcome=waiting-author -->"
@@ -295,6 +322,8 @@ class RankTests(unittest.TestCase):
         self.assertEqual(fetch.closing_issue_numbers("Related to #8"), [])
         self.assertEqual(fetch.closing_issue_numbers("Fixes #8"), [8])
         self.assertEqual(fetch.closing_issue_numbers("Closes #2\nResolves #3"), [2, 3])
+        self.assertEqual(fetch.closing_issue_numbers("Closes: #8"), [8])
+        self.assertEqual(fetch.closing_issue_numbers("Fixes: #9"), [9])
 
     def test_graphql_manual_link_without_keyword_is_not_a_closer(self) -> None:
         row = classify(
@@ -334,6 +363,24 @@ class RankTests(unittest.TestCase):
         assert row is not None
         self.assertEqual(row.closes_ready, [9])
 
+    def test_ready_for_pr_stamp_in_issue_body(self) -> None:
+        row = classify(
+            pr(
+                body="Closes: #4",
+                closing_issues=[
+                    {
+                        "number": 4,
+                        "labels": [],
+                        "body": "<!-- triage: 2026-08-19T23:40:00Z outcome=ready-for-pr -->",
+                        "comment_bodies": [],
+                    }
+                ],
+            )
+        )
+        self.assertIsNotNone(row)
+        assert row is not None
+        self.assertEqual(row.closes_ready, [4])
+
     def test_pr_cap(self) -> None:
         rows = [
             classify(pr(number=i, created_at=NOW - timedelta(days=10 - i), body="n"))
@@ -363,6 +410,18 @@ class CliTests(unittest.TestCase):
         self.assertEqual(fetch.parse_repo("acme/tools"), ("acme", "tools"))
         with self.assertRaises(Exception):
             fetch.parse_repo("tools")
+
+    def test_comment_page_query_matches_first_page_order(self) -> None:
+        self.assertIn(
+            "orderBy: {field: UPDATED_AT, direction: ASC}",
+            fetch.ISSUE_LIST_QUERY,
+        )
+        self.assertIn(
+            "orderBy: {field: UPDATED_AT, direction: ASC}",
+            fetch.COMMENT_PAGE_QUERY,
+        )
+        self.assertIn("before: $cursor, orderBy:", fetch.COMMENT_PAGE_QUERY)
+        self.assertIn("number title state body", fetch.PR_LIST_QUERY)
 
 
 if __name__ == "__main__":

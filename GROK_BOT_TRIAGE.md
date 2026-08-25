@@ -12,7 +12,7 @@ This is not a factory project crewmate. Do not launch factory cloud agents for i
 - repo: `<OWNER/NAME>`
 - owner login: `<owner login>`
 - disclosure line: `<exact disclosure line>`
-- firstmate-mark: `<substring used by fetch.py --firstmate-mark>`
+- firstmate-mark: `<text that must start a firstmate comment; usually the disclosure line>`
 - stale days: `<number, default 14>`
 - fetch:
 

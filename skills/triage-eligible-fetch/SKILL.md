@@ -15,13 +15,13 @@ From the shared Grok Bot computer:
 python3 /home/box/agent-data/grok-ship/pack/skills/triage-eligible-fetch/fetch.py \
   --repo <owner/name> \
   --owner <owner-login> \
-  --firstmate-mark "<disclosure line or distinctive substring>" \
+  --firstmate-mark "<disclosure line>" \
   --stale-days <days, default 14> \
   --issues 5 \
   --prs 5
 ```
 
-`--repo` and `--owner` are required. `--firstmate-mark` is required so firstmate comments do not reset the stamp clock. There is no config file. Flags only.
+`--repo` and `--owner` are required. `--firstmate-mark` is required and must match the start of a firstmate comment so those comments do not reset the stamp clock. There is no config file. Flags only.
 
 The script prints JSON: `issues` then `prs`, already ranked, already capped. Work those numbers in that order. A ready-for-pr closer PR is a work-order preference, not a merge vote.
 
@@ -32,7 +32,7 @@ The script prints JSON: `issues` then `prs`, already ranked, already capped. Wor
 - Skips automation authors (dependabot, github-actions, release-please, renovate, `[bot]`, `app/`)
 - Counts existing stamps matching `<!-- *triage: ISO8601` (`triage:`, `gh-axi-triage:`, `treehouse-triage:`)
 - Skips a stamped item whose only later activity is a firstmate-mark comment, unless that stamp is `--stale-days` old (stale-restamp)
-- Firstmate-mark comments do not reset the clock
+- Firstmate-mark comments (mark at the start of the comment) do not reset the clock
 - Issues: unstamped and other live, newer first, then stale-restamp oldest stamp, cap `--issues` (default 5)
 - PRs: those that close a ready-for-pr issue first (Fixes / Closes / Resolves only), then other live, then stale, cap `--prs` (default 5)
 

@@ -14,7 +14,7 @@ Read these from the triage charter or the invocation. Do not hardcode them.
 - `owner` — GitHub login of the repo owner. Never close that login's PRs except a last-resort port whose original is also stale (or already closed).
 - `disclosure-line` — the exact first line of the required close comment.
 - `stale-days` — default 14.
-- `firstmate-mark` — substring that marks firstmate comments. Usually the disclosure line.
+- `firstmate-mark` — text that must start a firstmate comment. Usually the disclosure line.
 
 Stamp outcome is `closed-stale-<stale-days>d` (so `closed-stale-14d` at the default).
 
