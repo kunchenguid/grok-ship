@@ -1154,6 +1154,103 @@ class RankTests(unittest.TestCase):
             fetch.backfill_closing_issues(item, "acme", "tools")
         self.assertEqual(fetch.ready_for_pr_closers(item, REPO), [9])
 
+    def test_future_ready_for_pr_stamp_does_not_boost_closer(self) -> None:
+        future = "<!-- triage: 2099-01-01T00:00:00Z outcome=ready-for-pr -->"
+        self.assertFalse(fetch.has_ready_for_pr([], [future], now=NOW))
+        row = classify(
+            pr(
+                body="Fixes #4",
+                closing_issues=[closing_issue(4, labels=[], body=future)],
+            )
+        )
+        self.assertIsNotNone(row)
+        assert row is not None
+        self.assertEqual(row.closes_ready, [])
+
+    def test_future_stamp_does_not_hide_ready_for_pr_closer(self) -> None:
+        real = "<!-- triage: 2026-08-19T23:40:00Z outcome=ready-for-pr -->"
+        future = "<!-- triage: 2099-01-01T00:00:00Z outcome=waiting-author -->"
+        self.assertTrue(fetch.has_ready_for_pr([], [real, future], now=NOW))
+        row = classify(
+            pr(
+                body="Fixes #4",
+                closing_issues=[
+                    closing_issue(4, labels=[], body=real + "\n" + future)
+                ],
+            )
+        )
+        self.assertIsNotNone(row)
+        assert row is not None
+        self.assertEqual(row.closes_ready, [4])
+
+    def test_older_closing_issue_comment_stamp_is_a_closer(self) -> None:
+        from unittest.mock import patch
+
+        item = fetch.item_from_pr(
+            pr_graphql(
+                body="Fixes #9",
+                closingIssuesReferences={
+                    "nodes": [
+                        {
+                            "number": 9,
+                            "title": "bug",
+                            "state": "OPEN",
+                            "body": "",
+                            "repository": {"nameWithOwner": REPO},
+                            "labels": {"nodes": []},
+                            "comments": {
+                                "pageInfo": {
+                                    "hasPreviousPage": True,
+                                    "startCursor": "c1",
+                                },
+                                "nodes": [
+                                    {
+                                        "body": "no stamp here",
+                                        "createdAt": "2026-08-24T00:00:00Z",
+                                    }
+                                ],
+                            },
+                        }
+                    ]
+                },
+            )
+        )
+        self.assertIsNotNone(item)
+        assert item is not None
+        self.assertEqual(fetch.ready_for_pr_closers(item, REPO, now=NOW), [])
+        older = {
+            "repository": {
+                "issueOrPullRequest": {
+                    "comments": {
+                        "pageInfo": {"hasPreviousPage": False},
+                        "nodes": [
+                            {
+                                "author": {"login": "contributor"},
+                                "body": (
+                                    "<!-- triage: 2026-08-19T23:40:00Z "
+                                    "outcome=ready-for-pr -->"
+                                ),
+                                "createdAt": "2026-08-19T23:40:00Z",
+                            }
+                        ],
+                    }
+                }
+            }
+        }
+        with patch.object(fetch, "gh_graphql", return_value=older) as gql:
+            fetch.backfill_closing_issue_comments(item)
+            self.assertEqual(gql.call_args.args[0], fetch.COMMENT_PAGE_QUERY)
+            self.assertEqual(
+                gql.call_args.args[1],
+                {
+                    "owner": "acme",
+                    "name": "tools",
+                    "number": 9,
+                    "cursor": "c1",
+                },
+            )
+        self.assertEqual(fetch.ready_for_pr_closers(item, REPO, now=NOW), [9])
+
     def test_ready_for_pr_stamp_in_issue_body(self) -> None:
         row = classify(
             pr(
@@ -1259,6 +1356,11 @@ class CliTests(unittest.TestCase):
             fetch.CLOSING_ISSUE_PAGE_QUERY,
         )
         self.assertIn("excludeUserLinked: true", fetch.CLOSING_ISSUE_PAGE_QUERY)
+        self.assertIn(
+            "comments(last: 50, orderBy: {field: UPDATED_AT, direction: ASC})",
+            fetch.CLOSING_ISSUE_PAGE_QUERY,
+        )
+        self.assertIn("hasPreviousPage startCursor", fetch.CLOSING_ISSUE_PAGE_QUERY)
         self.assertIn("message", fetch.COMMIT_PAGE_QUERY)
         self.assertIn("reviews(last: 100, before: $cursor)", fetch.REVIEW_PAGE_QUERY)
         self.assertIn("commits(last: 100, before: $cursor)", fetch.COMMIT_PAGE_QUERY)
@@ -1428,6 +1530,7 @@ class CliTests(unittest.TestCase):
         backfilled: list[int] = []
         review_backfilled: list[int] = []
         closing_backfilled: list[int] = []
+        closing_comment_backfilled: list[int] = []
         pr_review_backfilled: list[int] = []
         commit_backfilled: list[int] = []
 
@@ -1439,6 +1542,9 @@ class CliTests(unittest.TestCase):
 
         def fake_closing(item, *_args):
             closing_backfilled.append(item.number)
+
+        def fake_closing_comments(item, *_args):
+            closing_comment_backfilled.append(item.number)
 
         def fake_pr_reviews(item, *_args):
             pr_review_backfilled.append(item.number)
@@ -1452,6 +1558,11 @@ class CliTests(unittest.TestCase):
             patch.object(fetch, "backfill_comments", side_effect=fake_comments),
             patch.object(fetch, "backfill_review_threads", side_effect=fake_threads),
             patch.object(fetch, "backfill_closing_issues", side_effect=fake_closing),
+            patch.object(
+                fetch,
+                "backfill_closing_issue_comments",
+                side_effect=fake_closing_comments,
+            ),
             patch.object(fetch, "backfill_reviews", side_effect=fake_pr_reviews),
             patch.object(fetch, "backfill_commits", side_effect=fake_commits),
             patch.object(sys, "stdout", stdout),
@@ -1470,6 +1581,7 @@ class CliTests(unittest.TestCase):
         self.assertEqual(backfilled, [2, 4])
         self.assertEqual(review_backfilled, [4])
         self.assertEqual(closing_backfilled, [4])
+        self.assertEqual(closing_comment_backfilled, [4])
         self.assertEqual(pr_review_backfilled, [4])
         self.assertEqual(commit_backfilled, [4])
         payload = json.loads(stdout.getvalue())

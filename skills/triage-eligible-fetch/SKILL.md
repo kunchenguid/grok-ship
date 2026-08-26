@@ -31,7 +31,7 @@ The script prints JSON: `issues` then `prs`, already ranked, already capped. Wor
 - Skips `--owner` (captain's personal GitHub login) except a last-resort port (`Last-resort port of #N` in title or body)
 - Skips automation authors (dependabot, github-actions, release-please, renovate, `[bot]`, `app/`, Greptile, GraphQL `Bot` actors such as codecov/vercel, and similar)
 - Drops those skipped items before walking comments, so a captain with many open issues does not pay a full comment backfill every wake
-- Counts existing stamps matching `<!-- *triage: ISO8601` (`triage:`, `gh-axi-triage:`, `treehouse-triage:`). Timestamps after now are ignored
+- Counts existing stamps matching `<!-- *triage: ISO8601` (`triage:`, `gh-axi-triage:`, `treehouse-triage:`). Timestamps after now are ignored, including ready-for-pr stamps on linked closing issues
 - Skips a stamped item whose only later activity is a firstmate-mark comment or an automation comment/review, unless that stamp is `--stale-days` old (stale-restamp)
 - Firstmate-mark comments (mark at the start of the comment) and automation comments/reviews (including GraphQL Bot actors) do not reset the clock. Author comments (including inline review-thread replies on the diff), author review summaries, and new commits still jump the line
 - Issues: unstamped and other live, newer first, then stale-restamp oldest stamp, cap `--issues` (default 5)

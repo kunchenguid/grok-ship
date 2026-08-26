@@ -152,7 +152,8 @@ query($owner: String!, $name: String!, $number: Int!, $cursor: String) {
           number title state body
           repository { nameWithOwner }
           labels(first: 20) { nodes { name } }
-          comments(last: 20) {
+          comments(last: 50, orderBy: {field: UPDATED_AT, direction: ASC}) {
+            pageInfo { hasPreviousPage startCursor }
             nodes { body createdAt }
           }
         }
@@ -282,10 +283,15 @@ def latest_stamp(
     return max(found, key=lambda item: item[0])
 
 
-def has_ready_for_pr(labels: Iterable[str], texts: Iterable[str | None]) -> bool:
+def has_ready_for_pr(
+    labels: Iterable[str],
+    texts: Iterable[str | None],
+    *,
+    now: datetime | None = None,
+) -> bool:
     if any(label.lower() == "ready-for-pr" for label in labels):
         return True
-    stamp = latest_stamp(texts)
+    stamp = latest_stamp(texts, now=now)
     return bool(stamp and stamp[1] and stamp[1].lower() == "ready-for-pr")
 
 
@@ -319,7 +325,9 @@ def is_clock_noise(activity: Activity, firstmate_mark: str) -> bool:
     return is_firstmate_text(activity.body, firstmate_mark)
 
 
-def ready_for_pr_closers(item: Item, repo: str) -> list[int]:
+def ready_for_pr_closers(
+    item: Item, repo: str, *, now: datetime | None = None
+) -> list[int]:
     """PRs that close a ready-for-pr issue via Fixes/Closes/Resolves (and Closing/Resolving)."""
     texts = (item.body, *item.commit_messages)
     parsed = closing_issue_numbers(*texts, repo=repo)
@@ -363,7 +371,7 @@ def ready_for_pr_closers(item: Item, repo: str) -> list[int]:
         if issue is None:
             continue
         issue_texts = [issue.get("body"), *(issue.get("comment_bodies") or [])]
-        if has_ready_for_pr(issue.get("labels") or [], issue_texts):
+        if has_ready_for_pr(issue.get("labels") or [], issue_texts, now=now):
             ready.append(number)
     return ready
 
@@ -440,7 +448,7 @@ def classify_item(
 
     closes_ready: list[int] = []
     if item.kind == "pr":
-        closes_ready = ready_for_pr_closers(item, repo)
+        closes_ready = ready_for_pr_closers(item, repo, now=now)
 
     if stamp is None:
         return Classified(item, "unstamped", None, None, closes_ready)
@@ -623,9 +631,11 @@ def _parse_closing_issues(nodes: Iterable[dict[str, Any] | None]) -> list[dict[s
     for issue in nodes:
         if not issue:
             continue
+        comments = issue.get("comments") or {}
+        page = comments.get("pageInfo") or {}
         comment_bodies = [
             comment.get("body") or ""
-            for comment in (issue.get("comments") or {}).get("nodes") or []
+            for comment in comments.get("nodes") or []
             if comment
         ]
         closing.append(
@@ -637,6 +647,8 @@ def _parse_closing_issues(nodes: Iterable[dict[str, Any] | None]) -> list[dict[s
                 "labels": _label_names(issue),
                 "comment_bodies": comment_bodies,
                 "nameWithOwner": ((issue.get("repository") or {}).get("nameWithOwner") or ""),
+                "comment_cursor": page.get("startCursor"),
+                "has_older_comments": bool(page.get("hasPreviousPage")),
             }
         )
     return closing
@@ -804,6 +816,41 @@ def backfill_closing_issues(item: Item, repo_owner: str, repo_name: str) -> None
             break
 
 
+def backfill_closing_issue_comments(item: Item) -> None:
+    """Walk older comments on linked issues the same way item comments are walked."""
+    if item.kind != "pr":
+        return
+    for issue in item.closing_issues:
+        cursor = issue.get("comment_cursor")
+        while issue.get("has_older_comments") and cursor:
+            nwo = issue.get("nameWithOwner") or ""
+            parts = nwo.split("/")
+            number = issue.get("number")
+            if len(parts) != 2 or not parts[0] or not parts[1] or number is None:
+                issue["has_older_comments"] = False
+                break
+            data = gh_graphql(
+                COMMENT_PAGE_QUERY,
+                {
+                    "owner": parts[0],
+                    "name": parts[1],
+                    "number": int(number),
+                    "cursor": cursor,
+                },
+            )
+            container = (data.get("repository") or {}).get("issueOrPullRequest") or {}
+            comments = container.get("comments") or {}
+            issue.setdefault("comment_bodies", []).extend(
+                comment.get("body") or ""
+                for comment in comments.get("nodes") or []
+                if comment
+            )
+            page = comments.get("pageInfo") or {}
+            issue["has_older_comments"] = bool(page.get("hasPreviousPage"))
+            cursor = page.get("startCursor")
+            issue["comment_cursor"] = cursor
+
+
 def _backfill_thread_comments(item: Item, thread: dict[str, Any]) -> None:
     comments = thread.get("comments") or {}
     item.activities.extend(_parse_comments(comments.get("nodes") or []))
@@ -950,6 +997,7 @@ def main(argv: list[str] | None = None) -> int:
         backfill_comments(item, repo_owner, repo_name)
     for item in prs:
         backfill_closing_issues(item, repo_owner, repo_name)
+        backfill_closing_issue_comments(item)
         backfill_reviews(item, repo_owner, repo_name)
         backfill_commits(item, repo_owner, repo_name)
         backfill_review_threads(item, repo_owner, repo_name)
