@@ -10,7 +10,7 @@ Every wake starts with `skills/triage-eligible-fetch`. Work only the numbers it 
 
 Skip the captain's personal GitHub login (`--owner`, not the org or repo-owner slug) except last-resort ports (`Last-resort port of #N`). Skip automation (dependabot, github-actions, release-please, renovate, `[bot]`, `app/`, Greptile, and similar). Firstmate-mark comments and automation comments/reviews do not reset the stamp clock. Author comments, including inline review-thread replies on the diff, and new commits still jump the line.
 
-A PR that closes an open ready-for-pr issue in this repo (Fixes / Closes / Resolves with an issue ref) is worked first. That preference is not a merge vote. Closed linked issues and cross-repo refs do not consume preferred PR slots.
+A PR that closes an open ready-for-pr issue in this repo (Fixes / Closes / Resolves with an issue ref in the title, body, or commit message) is worked first. That preference is a sort hint, not a merge vote and not proof the PR closes the issue. Closed linked issues and cross-repo refs do not consume preferred PR slots.
 
 ## VISION
 

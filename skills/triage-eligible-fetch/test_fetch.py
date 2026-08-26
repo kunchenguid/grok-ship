@@ -770,6 +770,47 @@ class RankTests(unittest.TestCase):
         assert row is not None
         self.assertEqual(row.closes_ready, [9])
 
+    def test_title_only_closing_keyword_counts(self) -> None:
+        row = classify(
+            pr(
+                title="Fixes #8",
+                body="no keywords in the body",
+                closing_issues=[closing_issue(8)],
+            )
+        )
+        self.assertIsNotNone(row)
+        assert row is not None
+        self.assertEqual(row.closes_ready, [8])
+        ranked = fetch.rank_prs(
+            [
+                classify(pr(number=12, created_at=NOW - timedelta(days=1), body="tweaks")),
+                row,
+            ],
+            cap=5,
+        )
+        self.assertEqual([item.item.number for item in ranked], [10, 12])
+        self.assertEqual(ranked[0].closes_ready, [8])
+        bare_title = classify(
+            pr(
+                title="fix: handle the crash",
+                body="no keywords in the body",
+                closing_issues=[closing_issue(8)],
+            )
+        )
+        self.assertIsNotNone(bare_title)
+        assert bare_title is not None
+        self.assertEqual(bare_title.closes_ready, [])
+        cross = classify(
+            pr(
+                title="Fixes other/repo#8",
+                body="",
+                closing_issues=[closing_issue(8, nameWithOwner="other/repo")],
+            )
+        )
+        self.assertIsNotNone(cross)
+        assert cross is not None
+        self.assertEqual(cross.closes_ready, [])
+
     def test_fixes_list_keeps_every_ready_issue(self) -> None:
         row = classify(
             pr(

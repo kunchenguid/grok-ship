@@ -329,7 +329,7 @@ def ready_for_pr_closers(
     item: Item, repo: str, *, now: datetime | None = None
 ) -> list[int]:
     """PRs that close a ready-for-pr issue via Fixes/Closes/Resolves (and Closing/Resolving)."""
-    texts = (item.body, *item.commit_messages)
+    texts = (item.title, item.body, *item.commit_messages)
     parsed = closing_issue_numbers(*texts, repo=repo)
     candidates: list[int] = []
     seen: set[int] = set()
@@ -341,9 +341,10 @@ def ready_for_pr_closers(
 
     for number in parsed:
         add(number)
-    # After a closing keyword with an issue ref, use GitHub's same-repo
-    # linked issue list too (commit messages and multi-issue lists the
-    # body parser might still miss). Bare fix/close/resolve is not enough.
+    # After a closing keyword with an issue ref in title, body, or commits,
+    # use GitHub's same-repo linked issue list too. Bare fix/close/resolve
+    # is not enough. Title-only Fixes/Closes/Resolves #N is a sort hint,
+    # not proof the PR closes that issue.
     if parsed:
         for issue in item.closing_issues:
             number = issue.get("number")
