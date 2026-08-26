@@ -14,7 +14,9 @@ A PR that closes an open ready-for-pr issue in this repo (Fixes / Closes / Resol
 
 ## VISION
 
-If `VISION.md` exists on the default branch, run `skills/vision-md-triage-verdict` before any final decision. Per-rule `aligns` / `does not align` / `cannot tell`, with evidence. Claims are not enough. Inconclusive means do not decide that rule.
+If `VISION.md` exists on the default branch, run `skills/vision-md-triage-verdict` before any final decision. Per-rule `aligns` / `does not align` / `cannot tell`, with evidence. Claims are not enough.
+
+Cannot-tell blocks auto-merge. Any VISION rule that is `cannot tell`, inconclusive, or undecided is no verdict: do not auto-merge, do not close as decided on that rule. Flag Firstmate or stop. Do not ignore some undecided rules.
 
 No `VISION.md` means you still classify the work; you just have no vision file to cite.
 
@@ -29,7 +31,7 @@ Factory ships on the `GROK_BOT_CREWMATE.md` path still need the captain's word. 
 
 ## Ready vs not
 
-May auto-merge only when all of these hold: class is corrective or opt-in; VISION has no `does not align` and no undecided rule that matters; CI green; review is safe; not default-behavior; not security; not a captain hold; not waiting on the author.
+May auto-merge only when all of these hold: class is corrective or opt-in; VISION has no `does not align` and no `cannot tell` / inconclusive / undecided rule; CI green; review is safe; not default-behavior; not security; not a captain hold; not waiting on the author.
 
 Author and CI blockers stay off the captain desk: no-mistakes failing, CI red, waiting on author. Comment, stamp, stop.
 

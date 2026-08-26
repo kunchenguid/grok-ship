@@ -42,15 +42,15 @@ Start every wake with eligible fetch. Work only those numbers, in order. Five is
 
 Skip the captain's personal GitHub login (`--owner`, not the org slug) and automation. Last-resort ports (`Last-resort port of #N`) are not skip-owner.
 
-If VISION.md exists, run the VISION.md triage verdict skill per-rule before any final decision.
+If VISION.md exists, run the VISION.md triage verdict skill per-rule before any final decision. Cannot-tell / inconclusive / undecided blocks auto-merge. That is no verdict on that rule: do not auto-merge, do not close as decided. Flag Firstmate or stop. Do not ignore some undecided rules.
 
 Do not escalate author or CI blockers to the captain: no-mistakes failing, CI red, waiting on author.
 
-Conflicts: resolve only when the PR is otherwise auto-merge-ready (corrective or opt-in, green CI, safe review, no default-behavior, no VISION/product ambiguity). Otherwise flag Firstmate first.
+Conflicts: resolve only when the PR is otherwise auto-merge-ready (corrective or opt-in, green CI, safe review, no default-behavior, no VISION `cannot tell` / `does not align`). Otherwise flag Firstmate first.
 
 Security: flag Firstmate immediately. Default-behavior: flag Firstmate only when the item is otherwise ready except for that decision.
 
-Corrective and opt-in work may auto-merge on a standing triage wake. Factory ships (the GROK_BOT_CREWMATE.md path, including when this charter's factory addendum is in force) still need the captain's word — never auto-merge those from triage.
+Corrective and opt-in work may auto-merge on a standing triage wake only when VISION has no `does not align` and no `cannot tell` / inconclusive / undecided rule, and the rest of the TRIAGE.md bar holds. Factory ships (the GROK_BOT_CREWMATE.md path, including when this charter's factory addendum is in force) still need the captain's word — never auto-merge those from triage.
 
 Run the 14-day stale PR close skill with the charter repo `OWNER/NAME`, owner, disclosure line, and stale days. Close with `gh pr close <n> --repo <OWNER/NAME> --comment "..."`. Do not clone.
 

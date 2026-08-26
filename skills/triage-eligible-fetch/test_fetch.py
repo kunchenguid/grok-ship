@@ -1215,6 +1215,20 @@ class CliTests(unittest.TestCase):
         self.assertIn("ONLY when Firstmate sends a real factory scout or ship", addendum)
         self.assertIn("NEVER launch a cloud agent for issue fixes", addendum)
         self.assertIn("FM-", addendum)
+        self.assertIn("Cannot-tell / inconclusive / undecided blocks auto-merge", addendum)
+        self.assertIn("Do not ignore some undecided rules", addendum)
+        triage = Path(__file__).resolve().parents[2] / "TRIAGE.md"
+        triage_text = triage.read_text()
+        self.assertIn("Cannot-tell blocks auto-merge", triage_text)
+        self.assertIn("Do not ignore some undecided rules", triage_text)
+        self.assertNotIn("undecided rule that matters", triage_text)
+        vision = (
+            Path(__file__).resolve().parents[2]
+            / "skills/vision-md-triage-verdict/SKILL.md"
+        ).read_text()
+        self.assertIn("Cannot-tell blocks auto-merge", vision)
+        self.assertIn("Do not ignore some undecided rules", vision)
+        self.assertIn("do not auto-merge", vision)
 
     def test_parse_repo(self) -> None:
         self.assertEqual(fetch.parse_repo("acme/tools"), ("acme", "tools"))
