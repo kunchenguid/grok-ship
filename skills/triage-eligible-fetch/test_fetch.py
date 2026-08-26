@@ -811,6 +811,119 @@ class RankTests(unittest.TestCase):
         assert cross is not None
         self.assertEqual(cross.closes_ready, [])
 
+    def test_omitted_github_closing_list_still_loads_parsed_issue(self) -> None:
+        from unittest.mock import patch
+
+        item = pr(
+            title="Fixes #8",
+            body="no keywords in the body",
+            closing_issues=[],
+        )
+        self.assertEqual(fetch.ready_for_pr_closers(item, REPO, now=NOW), [])
+        payload = {
+            "repository": {
+                "issue": {
+                    "number": 8,
+                    "title": "bug",
+                    "state": "OPEN",
+                    "body": (
+                        "<!-- triage: 2026-08-19T23:40:00Z "
+                        "outcome=ready-for-pr -->"
+                    ),
+                    "repository": {"nameWithOwner": REPO},
+                    "labels": {"nodes": []},
+                    "comments": {"pageInfo": {}, "nodes": []},
+                }
+            }
+        }
+        with patch.object(fetch, "gh_graphql", return_value=payload) as gql:
+            fetch.backfill_parsed_closing_issues(item, REPO, "acme", "tools")
+            self.assertEqual(gql.call_args.args[0], fetch.ISSUE_LOOKUP_QUERY)
+            self.assertEqual(
+                gql.call_args.args[1],
+                {"owner": "acme", "name": "tools", "number": 8},
+            )
+        self.assertEqual(fetch.ready_for_pr_closers(item, REPO, now=NOW), [8])
+        foreign_same_number = pr(
+            title="Fixes #8",
+            body="",
+            closing_issues=[closing_issue(8, nameWithOwner="other/repo")],
+        )
+        with patch.object(fetch, "gh_graphql", return_value=payload) as gql:
+            fetch.backfill_parsed_closing_issues(
+                foreign_same_number, REPO, "acme", "tools"
+            )
+            gql.assert_called_once()
+        self.assertEqual(
+            fetch.ready_for_pr_closers(foreign_same_number, REPO, now=NOW), [8]
+        )
+        closing = pr(
+            title="fix bug",
+            body="Closing #9",
+            closing_issues=[],
+        )
+        closing_payload = {
+            "repository": {
+                "issue": {
+                    "number": 9,
+                    "title": "bug",
+                    "state": "OPEN",
+                    "body": "",
+                    "repository": {"nameWithOwner": REPO},
+                    "labels": {"nodes": [{"name": "ready-for-pr"}]},
+                    "comments": {"nodes": []},
+                }
+            }
+        }
+        with patch.object(fetch, "gh_graphql", return_value=closing_payload):
+            fetch.backfill_parsed_closing_issues(closing, REPO, "acme", "tools")
+        self.assertEqual(fetch.ready_for_pr_closers(closing, REPO, now=NOW), [9])
+
+    def test_parsed_lookup_skips_numbers_already_in_same_repo_list(self) -> None:
+        from unittest.mock import patch
+
+        item = pr(
+            title="Fixes #8",
+            body="",
+            closing_issues=[closing_issue(8)],
+        )
+        with patch.object(fetch, "gh_graphql") as gql:
+            fetch.backfill_parsed_closing_issues(item, REPO, "acme", "tools")
+            gql.assert_not_called()
+        self.assertEqual(fetch.ready_for_pr_closers(item, REPO, now=NOW), [8])
+
+    def test_parsed_lookup_skips_null_or_closed_issue(self) -> None:
+        from unittest.mock import patch
+
+        missing = pr(title="Fixes #8", body="", closing_issues=[])
+        with patch.object(
+            fetch, "gh_graphql", return_value={"repository": {"issue": None}}
+        ):
+            fetch.backfill_parsed_closing_issues(missing, REPO, "acme", "tools")
+        self.assertEqual(missing.closing_issues, [])
+        self.assertEqual(fetch.ready_for_pr_closers(missing, REPO, now=NOW), [])
+        closed = pr(title="Fixes #8", body="", closing_issues=[])
+        with patch.object(
+            fetch,
+            "gh_graphql",
+            return_value={
+                "repository": {
+                    "issue": {
+                        "number": 8,
+                        "title": "bug",
+                        "state": "CLOSED",
+                        "body": "",
+                        "repository": {"nameWithOwner": REPO},
+                        "labels": {"nodes": [{"name": "ready-for-pr"}]},
+                        "comments": {"nodes": []},
+                    }
+                }
+            },
+        ):
+            fetch.backfill_parsed_closing_issues(closed, REPO, "acme", "tools")
+        self.assertEqual(closed.closing_issues[0]["state"], "CLOSED")
+        self.assertEqual(fetch.ready_for_pr_closers(closed, REPO, now=NOW), [])
+
     def test_fixes_list_keeps_every_ready_issue(self) -> None:
         row = classify(
             pr(
@@ -1279,7 +1392,7 @@ class RankTests(unittest.TestCase):
             }
         }
         with patch.object(fetch, "gh_graphql", return_value=older) as gql:
-            fetch.backfill_closing_issue_comments(item)
+            fetch.backfill_closing_issue_comments(item, REPO)
             self.assertEqual(gql.call_args.args[0], fetch.COMMENT_PAGE_QUERY)
             self.assertEqual(
                 gql.call_args.args[1],
@@ -1421,6 +1534,9 @@ class CliTests(unittest.TestCase):
             fetch.CLOSING_ISSUE_PAGE_QUERY,
         )
         self.assertIn("hasPreviousPage startCursor", fetch.CLOSING_ISSUE_PAGE_QUERY)
+        self.assertIn("issue(number: $number)", fetch.ISSUE_LOOKUP_QUERY)
+        self.assertIn("number title state body", fetch.ISSUE_LOOKUP_QUERY)
+        self.assertIn("repository { nameWithOwner }", fetch.ISSUE_LOOKUP_QUERY)
         self.assertIn("message", fetch.COMMIT_PAGE_QUERY)
         self.assertIn("reviews(last: 100, before: $cursor)", fetch.REVIEW_PAGE_QUERY)
         self.assertIn("commits(last: 100, before: $cursor)", fetch.COMMIT_PAGE_QUERY)
@@ -1595,8 +1711,7 @@ class CliTests(unittest.TestCase):
         self.assertEqual([issue["number"] for issue in item.closing_issues], [1])
         self.assertEqual(fetch.ready_for_pr_closers(item, REPO, now=NOW), [1])
 
-    def test_foreign_closer_comment_page_not_found_does_not_abort(self) -> None:
-        import subprocess
+    def test_skips_closing_issue_comment_backfill_for_foreign_repo(self) -> None:
         from unittest.mock import patch
 
         item = fetch.item_from_pr(
@@ -1625,24 +1740,9 @@ class CliTests(unittest.TestCase):
         )
         self.assertIsNotNone(item)
         assert item is not None
-        payload = {
-            "data": {"repository": None},
-            "errors": [
-                {
-                    "type": "NOT_FOUND",
-                    "path": ["repository"],
-                    "message": "Could not resolve to a Repository with the name 'other/repo'.",
-                }
-            ],
-        }
-        err = subprocess.CalledProcessError(
-            1,
-            ["gh", "api", "graphql"],
-            output=json.dumps(payload),
-            stderr="gh: GraphQL: Could not resolve to a Repository (repository)",
-        )
-        with patch.object(fetch.subprocess, "run", side_effect=err):
-            fetch.backfill_closing_issue_comments(item)
+        with patch.object(fetch, "gh_graphql") as gql:
+            fetch.backfill_closing_issue_comments(item, REPO)
+            gql.assert_not_called()
         self.assertEqual(item.closing_issues[0]["comment_bodies"], ["no stamp here"])
         self.assertFalse(item.closing_issues[0]["has_older_comments"])
 
@@ -1792,6 +1892,7 @@ class CliTests(unittest.TestCase):
         review_backfilled: list[int] = []
         closing_backfilled: list[int] = []
         closing_comment_backfilled: list[int] = []
+        parsed_closing_backfilled: list[int] = []
         pr_review_backfilled: list[int] = []
         commit_backfilled: list[int] = []
 
@@ -1807,6 +1908,9 @@ class CliTests(unittest.TestCase):
         def fake_closing_comments(item, *_args):
             closing_comment_backfilled.append(item.number)
 
+        def fake_parsed_closing(item, *_args):
+            parsed_closing_backfilled.append(item.number)
+
         def fake_pr_reviews(item, *_args):
             pr_review_backfilled.append(item.number)
 
@@ -1819,6 +1923,11 @@ class CliTests(unittest.TestCase):
             patch.object(fetch, "backfill_comments", side_effect=fake_comments),
             patch.object(fetch, "backfill_review_threads", side_effect=fake_threads),
             patch.object(fetch, "backfill_closing_issues", side_effect=fake_closing),
+            patch.object(
+                fetch,
+                "backfill_parsed_closing_issues",
+                side_effect=fake_parsed_closing,
+            ),
             patch.object(
                 fetch,
                 "backfill_closing_issue_comments",
@@ -1842,6 +1951,7 @@ class CliTests(unittest.TestCase):
         self.assertEqual(backfilled, [2, 4])
         self.assertEqual(review_backfilled, [4])
         self.assertEqual(closing_backfilled, [4])
+        self.assertEqual(parsed_closing_backfilled, [4])
         self.assertEqual(closing_comment_backfilled, [4])
         self.assertEqual(pr_review_backfilled, [4])
         self.assertEqual(commit_backfilled, [4])
@@ -1870,6 +1980,36 @@ class CliTests(unittest.TestCase):
                 ),
                 [],
             )
+
+    def test_paginate_nodes_stops_when_end_cursor_is_missing(self) -> None:
+        from unittest.mock import patch
+
+        page = {
+            "repository": {
+                "issues": {
+                    "nodes": [
+                        {
+                            "number": 2,
+                            "title": "bug",
+                            "url": "https://example.com/i/2",
+                            "createdAt": "2026-08-21T00:00:00Z",
+                            "body": "broke",
+                            "author": {"login": "contributor"},
+                            "labels": {"nodes": []},
+                            "comments": {"pageInfo": {}, "nodes": []},
+                        }
+                    ],
+                    "pageInfo": {"hasNextPage": True, "endCursor": None},
+                }
+            }
+        }
+        with patch.object(fetch, "gh_graphql", return_value=page) as gql:
+            nodes = fetch.paginate_nodes(
+                fetch.ISSUE_LIST_QUERY, "acme", "tools", "issues"
+            )
+        self.assertEqual(len(nodes), 1)
+        self.assertEqual(nodes[0]["number"], 2)
+        self.assertEqual(gql.call_count, 1)
 
 
 if __name__ == "__main__":

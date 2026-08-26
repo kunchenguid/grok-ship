@@ -163,6 +163,22 @@ query($owner: String!, $name: String!, $number: Int!, $cursor: String) {
 }
 """
 
+ISSUE_LOOKUP_QUERY = """
+query($owner: String!, $name: String!, $number: Int!) {
+  repository(owner: $owner, name: $name) {
+    issue(number: $number) {
+      number title state body
+      repository { nameWithOwner }
+      labels(first: 20) { nodes { name } }
+      comments(last: 50, orderBy: {field: UPDATED_AT, direction: ASC}) {
+        pageInfo { hasPreviousPage startCursor }
+        nodes { body createdAt }
+      }
+    }
+  }
+}
+"""
+
 REVIEW_PAGE_QUERY = """
 query($owner: String!, $name: String!, $number: Int!, $cursor: String) {
   repository(owner: $owner, name: $name) {
@@ -843,11 +859,47 @@ def backfill_closing_issues(item: Item, repo_owner: str, repo_name: str) -> None
             break
 
 
-def backfill_closing_issue_comments(item: Item) -> None:
-    """Walk older comments on linked issues the same way item comments are walked."""
+def backfill_parsed_closing_issues(
+    item: Item, repo: str, repo_owner: str, repo_name: str
+) -> None:
+    """Load same-repo issues named by title/body/commits that GitHub omitted.
+
+    GitHub does not fill closingIssuesReferences from a PR title, from
+    Closing/Resolving, or when the PR is not against the default branch.
+    """
+    if item.kind != "pr":
+        return
+    parsed = closing_issue_numbers(
+        item.title, item.body, *item.commit_messages, repo=repo
+    )
+    have = {
+        int(issue["number"])
+        for issue in item.closing_issues
+        if issue.get("number") is not None and linked_issue_in_repo(issue, repo)
+    }
+    for number in parsed:
+        if number in have:
+            continue
+        data = gh_graphql(
+            ISSUE_LOOKUP_QUERY,
+            {"owner": repo_owner, "name": repo_name, "number": int(number)},
+        )
+        node = (data.get("repository") or {}).get("issue")
+        loaded = _parse_closing_issues([node] if node else [])
+        if not loaded:
+            continue
+        item.closing_issues.extend(loaded)
+        have.add(int(number))
+
+
+def backfill_closing_issue_comments(item: Item, repo: str) -> None:
+    """Walk older comments on same-repo linked issues. Foreign repos cannot boost ranking."""
     if item.kind != "pr":
         return
     for issue in item.closing_issues:
+        if not linked_issue_in_repo(issue, repo):
+            issue["has_older_comments"] = False
+            continue
         cursor = issue.get("comment_cursor")
         while issue.get("has_older_comments") and cursor:
             nwo = issue.get("nameWithOwner") or ""
@@ -944,6 +996,8 @@ def paginate_nodes(
         if not page.get("hasNextPage"):
             break
         cursor = page.get("endCursor")
+        if not cursor:
+            break
     return nodes
 
 
@@ -1024,9 +1078,10 @@ def main(argv: list[str] | None = None) -> int:
         backfill_comments(item, repo_owner, repo_name)
     for item in prs:
         backfill_closing_issues(item, repo_owner, repo_name)
-        backfill_closing_issue_comments(item)
-        backfill_reviews(item, repo_owner, repo_name)
         backfill_commits(item, repo_owner, repo_name)
+        backfill_parsed_closing_issues(item, args.repo, repo_owner, repo_name)
+        backfill_closing_issue_comments(item, args.repo)
+        backfill_reviews(item, repo_owner, repo_name)
         backfill_review_threads(item, repo_owner, repo_name)
 
     classified_issues = [
