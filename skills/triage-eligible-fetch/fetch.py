@@ -83,10 +83,12 @@ query($owner: String!, $name: String!, $cursor: String) {
           pageInfo { hasPreviousPage startCursor }
           nodes { author { login } body createdAt }
         }
-        reviews(last: 30) {
+        reviews(last: 100) {
+          pageInfo { hasPreviousPage startCursor }
           nodes { author { login } body createdAt }
         }
-        commits(last: 20) {
+        commits(last: 100) {
+          pageInfo { hasPreviousPage startCursor }
           nodes {
             commit {
               message
@@ -177,6 +179,38 @@ query($owner: String!, $name: String!, $number: Int!, $cursor: String) {
           labels(first: 20) { nodes { name } }
           comments(last: 20) {
             nodes { body createdAt }
+          }
+        }
+      }
+    }
+  }
+}
+"""
+
+REVIEW_PAGE_QUERY = """
+query($owner: String!, $name: String!, $number: Int!, $cursor: String) {
+  repository(owner: $owner, name: $name) {
+    pullRequest(number: $number) {
+      reviews(last: 100, before: $cursor) {
+        pageInfo { hasPreviousPage startCursor }
+        nodes { author { login } body createdAt }
+      }
+    }
+  }
+}
+"""
+
+COMMIT_PAGE_QUERY = """
+query($owner: String!, $name: String!, $number: Int!, $cursor: String) {
+  repository(owner: $owner, name: $name) {
+    pullRequest(number: $number) {
+      commits(last: 100, before: $cursor) {
+        pageInfo { hasPreviousPage startCursor }
+        nodes {
+          commit {
+            message
+            committedDate
+            authors(first: 5) { nodes { user { login } } }
           }
         }
       }
@@ -376,6 +410,10 @@ class Item:
     has_older_comments: bool = False
     closing_cursor: str | None = None
     has_more_closing: bool = False
+    review_cursor: str | None = None
+    has_older_reviews: bool = False
+    commit_cursor: str | None = None
+    has_older_commits: bool = False
 
 
 @dataclass(frozen=True)
@@ -486,9 +524,11 @@ def _actor_login(node: dict[str, Any] | None) -> str | None:
     return node.get("login")
 
 
-def _parse_comments(nodes: Iterable[dict[str, Any]]) -> list[Activity]:
+def _parse_comments(nodes: Iterable[dict[str, Any] | None]) -> list[Activity]:
     activities: list[Activity] = []
     for node in nodes:
+        if not node:
+            continue
         try:
             when = parse_iso(node["createdAt"])
         except (KeyError, TypeError, ValueError):
@@ -504,54 +544,19 @@ def _parse_comments(nodes: Iterable[dict[str, Any]]) -> list[Activity]:
     return activities
 
 
-def item_from_issue(node: dict[str, Any]) -> Item:
-    comments = node.get("comments") or {}
-    page = comments.get("pageInfo") or {}
-    return Item(
-        number=int(node["number"]),
-        title=node.get("title") or "",
-        url=node.get("url") or "",
-        created_at=parse_iso(node["createdAt"]),
-        author=_actor_login(node.get("author")),
-        body=node.get("body") or "",
-        kind="issue",
-        labels=[label.get("name") or "" for label in (node.get("labels") or {}).get("nodes") or []],
-        activities=_parse_comments(comments.get("nodes") or []),
-        comment_cursor=page.get("startCursor"),
-        has_older_comments=bool(page.get("hasPreviousPage")),
-    )
+def _label_names(node: dict[str, Any]) -> list[str]:
+    return [
+        label.get("name") or ""
+        for label in (node.get("labels") or {}).get("nodes") or []
+        if label
+    ]
 
 
-def _parse_closing_issues(nodes: Iterable[dict[str, Any]]) -> list[dict[str, Any]]:
-    closing: list[dict[str, Any]] = []
-    for issue in nodes:
-        comment_bodies = [
-            comment.get("body") or ""
-            for comment in (issue.get("comments") or {}).get("nodes") or []
-        ]
-        closing.append(
-            {
-                "number": issue.get("number"),
-                "title": issue.get("title") or "",
-                "state": issue.get("state"),
-                "body": issue.get("body") or "",
-                "labels": [
-                    label.get("name") or ""
-                    for label in (issue.get("labels") or {}).get("nodes") or []
-                ],
-                "comment_bodies": comment_bodies,
-                "nameWithOwner": ((issue.get("repository") or {}).get("nameWithOwner") or ""),
-            }
-        )
-    return closing
-
-
-def item_from_pr(node: dict[str, Any]) -> Item:
-    comments = node.get("comments") or {}
-    page = comments.get("pageInfo") or {}
-    activities = _parse_comments(comments.get("nodes") or [])
-    commit_messages: list[str] = []
-    for review in (node.get("reviews") or {}).get("nodes") or []:
+def _parse_reviews(nodes: Iterable[dict[str, Any] | None]) -> list[Activity]:
+    activities: list[Activity] = []
+    for review in nodes:
+        if not review:
+            continue
         try:
             when = parse_iso(review["createdAt"])
         except (KeyError, TypeError, ValueError):
@@ -564,11 +569,21 @@ def item_from_pr(node: dict[str, Any]) -> Item:
                 body=review.get("body") or "",
             )
         )
-    for commit_node in (node.get("commits") or {}).get("nodes") or []:
-        commit = (commit_node or {}).get("commit") or {}
+    return activities
+
+
+def _parse_commits(
+    nodes: Iterable[dict[str, Any] | None],
+) -> tuple[list[Activity], list[str]]:
+    activities: list[Activity] = []
+    messages: list[str] = []
+    for commit_node in nodes:
+        if not commit_node:
+            continue
+        commit = commit_node.get("commit") or {}
         message = commit.get("message") or ""
         if message:
-            commit_messages.append(message)
+            messages.append(message)
         try:
             when = parse_iso(commit["committedDate"])
         except (KeyError, TypeError, ValueError):
@@ -576,13 +591,73 @@ def item_from_pr(node: dict[str, Any]) -> Item:
         authors = (commit.get("authors") or {}).get("nodes") or []
         login = None
         for author in authors:
-            user = (author or {}).get("user") or {}
+            if not author:
+                continue
+            user = author.get("user") or {}
             if user.get("login"):
                 login = user["login"]
                 break
-        activities.append(
-            Activity(when=when, kind="commit", login=login, body=None)
+        activities.append(Activity(when=when, kind="commit", login=login, body=None))
+    return activities, messages
+
+
+def item_from_issue(node: dict[str, Any] | None) -> Item | None:
+    if not node:
+        return None
+    comments = node.get("comments") or {}
+    page = comments.get("pageInfo") or {}
+    return Item(
+        number=int(node["number"]),
+        title=node.get("title") or "",
+        url=node.get("url") or "",
+        created_at=parse_iso(node["createdAt"]),
+        author=_actor_login(node.get("author")),
+        body=node.get("body") or "",
+        kind="issue",
+        labels=_label_names(node),
+        activities=_parse_comments(comments.get("nodes") or []),
+        comment_cursor=page.get("startCursor"),
+        has_older_comments=bool(page.get("hasPreviousPage")),
+    )
+
+
+def _parse_closing_issues(nodes: Iterable[dict[str, Any] | None]) -> list[dict[str, Any]]:
+    closing: list[dict[str, Any]] = []
+    for issue in nodes:
+        if not issue:
+            continue
+        comment_bodies = [
+            comment.get("body") or ""
+            for comment in (issue.get("comments") or {}).get("nodes") or []
+            if comment
+        ]
+        closing.append(
+            {
+                "number": issue.get("number"),
+                "title": issue.get("title") or "",
+                "state": issue.get("state"),
+                "body": issue.get("body") or "",
+                "labels": _label_names(issue),
+                "comment_bodies": comment_bodies,
+                "nameWithOwner": ((issue.get("repository") or {}).get("nameWithOwner") or ""),
+            }
         )
+    return closing
+
+
+def item_from_pr(node: dict[str, Any] | None) -> Item | None:
+    if not node:
+        return None
+    comments = node.get("comments") or {}
+    page = comments.get("pageInfo") or {}
+    activities = _parse_comments(comments.get("nodes") or [])
+    reviews = node.get("reviews") or {}
+    review_page = reviews.get("pageInfo") or {}
+    activities.extend(_parse_reviews(reviews.get("nodes") or []))
+    commits = node.get("commits") or {}
+    commit_page = commits.get("pageInfo") or {}
+    commit_activities, commit_messages = _parse_commits(commits.get("nodes") or [])
+    activities.extend(commit_activities)
     closing_conn = node.get("closingIssuesReferences") or {}
     closing_page = closing_conn.get("pageInfo") or {}
     return Item(
@@ -600,7 +675,61 @@ def item_from_pr(node: dict[str, Any]) -> Item:
         has_older_comments=bool(page.get("hasPreviousPage")),
         closing_cursor=closing_page.get("endCursor"),
         has_more_closing=bool(closing_page.get("hasNextPage")),
+        review_cursor=review_page.get("startCursor"),
+        has_older_reviews=bool(review_page.get("hasPreviousPage")),
+        commit_cursor=commit_page.get("startCursor"),
+        has_older_commits=bool(commit_page.get("hasPreviousPage")),
     )
+
+
+def backfill_reviews(item: Item, repo_owner: str, repo_name: str) -> None:
+    """Walk older review summaries so a bot burst cannot hide an author review."""
+    if item.kind != "pr":
+        return
+    cursor = item.review_cursor
+    while item.has_older_reviews and cursor:
+        data = gh_graphql(
+            REVIEW_PAGE_QUERY,
+            {
+                "owner": repo_owner,
+                "name": repo_name,
+                "number": item.number,
+                "cursor": cursor,
+            },
+        )
+        pull = ((data.get("repository") or {}).get("pullRequest")) or {}
+        reviews = pull.get("reviews") or {}
+        item.activities.extend(_parse_reviews(reviews.get("nodes") or []))
+        page = reviews.get("pageInfo") or {}
+        item.has_older_reviews = bool(page.get("hasPreviousPage"))
+        cursor = page.get("startCursor")
+        item.review_cursor = cursor
+
+
+def backfill_commits(item: Item, repo_owner: str, repo_name: str) -> None:
+    """Walk older commits so a Fixes/Closes/Resolves #N is not lost off the newest page."""
+    if item.kind != "pr":
+        return
+    cursor = item.commit_cursor
+    while item.has_older_commits and cursor:
+        data = gh_graphql(
+            COMMIT_PAGE_QUERY,
+            {
+                "owner": repo_owner,
+                "name": repo_name,
+                "number": item.number,
+                "cursor": cursor,
+            },
+        )
+        pull = ((data.get("repository") or {}).get("pullRequest")) or {}
+        commits = pull.get("commits") or {}
+        activities, messages = _parse_commits(commits.get("nodes") or [])
+        item.activities.extend(activities)
+        item.commit_messages.extend(messages)
+        page = commits.get("pageInfo") or {}
+        item.has_older_commits = bool(page.get("hasPreviousPage"))
+        cursor = page.get("startCursor")
+        item.commit_cursor = cursor
 
 
 def backfill_comments(item: Item, repo_owner: str, repo_name: str) -> None:
@@ -686,7 +815,8 @@ def backfill_review_threads(item: Item, repo_owner: str, repo_name: str) -> None
         pull = ((data.get("repository") or {}).get("pullRequest")) or {}
         conn = pull.get("reviewThreads") or {}
         for thread in conn.get("nodes") or []:
-            _backfill_thread_comments(item, thread)
+            if thread:
+                _backfill_thread_comments(item, thread)
         page = conn.get("pageInfo") or {}
         if not page.get("hasPreviousPage"):
             break
@@ -710,7 +840,7 @@ def paginate_nodes(
                 f"repository not found or inaccessible: {repo_owner}/{repo_name}"
             )
         conn = repo.get(field) or {}
-        nodes.extend(conn.get("nodes") or [])
+        nodes.extend(node for node in (conn.get("nodes") or []) if node)
         page = conn.get("pageInfo") or {}
         if not page.get("hasNextPage"):
             break
@@ -784,17 +914,19 @@ def main(argv: list[str] | None = None) -> int:
     issues = [
         item
         for item in (item_from_issue(node) for node in issue_nodes)
-        if not skip_before_classify(item, args.owner)
+        if item is not None and not skip_before_classify(item, args.owner)
     ]
     prs = [
         item
         for item in (item_from_pr(node) for node in pr_nodes)
-        if not skip_before_classify(item, args.owner)
+        if item is not None and not skip_before_classify(item, args.owner)
     ]
     for item in issues + prs:
         backfill_comments(item, repo_owner, repo_name)
     for item in prs:
         backfill_closing_issues(item, repo_owner, repo_name)
+        backfill_reviews(item, repo_owner, repo_name)
+        backfill_commits(item, repo_owner, repo_name)
         backfill_review_threads(item, repo_owner, repo_name)
 
     classified_issues = [

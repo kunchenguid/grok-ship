@@ -67,6 +67,23 @@ def closing_issue(number: int, **kwargs) -> dict:
     return values
 
 
+def pr_graphql(**kwargs) -> dict:
+    values: dict = {
+        "number": 10,
+        "title": "fix",
+        "url": "https://github.com/acme/tools/pull/10",
+        "createdAt": "2026-08-20T00:00:00Z",
+        "body": "Fixes #8",
+        "author": {"login": "contributor"},
+        "comments": {"pageInfo": {}, "nodes": []},
+        "reviews": {"nodes": []},
+        "commits": {"nodes": []},
+        "closingIssuesReferences": {"nodes": []},
+    }
+    values.update(kwargs)
+    return values
+
+
 def classify(item: fetch.Item, **kwargs) -> fetch.Classified | None:
     params = dict(owner=OWNER, firstmate_mark=MARK, stale_days=14, now=NOW, repo=REPO)
     params.update(kwargs)
@@ -299,6 +316,70 @@ class ClockTests(unittest.TestCase):
             )
         )
         self.assertIsNone(row)
+
+    def test_older_author_review_makes_live(self) -> None:
+        stamp_at = NOW - timedelta(days=1)
+        stamp = (
+            f"<!-- triage: {stamp_at.strftime('%Y-%m-%dT%H:%M:%SZ')} "
+            "outcome=waiting-author -->"
+        )
+        item = fetch.item_from_pr(
+            pr_graphql(
+                body="",
+                comments={
+                    "pageInfo": {},
+                    "nodes": [
+                        {
+                            "author": {"login": OWNER},
+                            "body": stamp,
+                            "createdAt": stamp_at.strftime("%Y-%m-%dT%H:%M:%SZ"),
+                        }
+                    ],
+                },
+                reviews={
+                    "pageInfo": {"hasPreviousPage": True, "startCursor": "r1"},
+                    "nodes": [
+                        {
+                            "author": {"login": "github-actions[bot]"},
+                            "body": "LGTM from CI.",
+                            "createdAt": (NOW - timedelta(minutes=5)).strftime(
+                                "%Y-%m-%dT%H:%M:%SZ"
+                            ),
+                        }
+                    ],
+                },
+            )
+        )
+        self.assertIsNotNone(item)
+        assert item is not None
+        self.assertIsNone(classify(item))
+        older = {
+            "repository": {
+                "pullRequest": {
+                    "reviews": {
+                        "pageInfo": {"hasPreviousPage": False},
+                        "nodes": [
+                            {
+                                "author": {"login": "contributor"},
+                                "body": "addressed the nits",
+                                "createdAt": (NOW - timedelta(hours=1)).strftime(
+                                    "%Y-%m-%dT%H:%M:%SZ"
+                                ),
+                            }
+                        ],
+                    }
+                }
+            }
+        }
+        from unittest.mock import patch
+
+        with patch.object(fetch, "gh_graphql", return_value=older) as gql:
+            fetch.backfill_reviews(item, "acme", "tools")
+            self.assertEqual(gql.call_args.args[0], fetch.REVIEW_PAGE_QUERY)
+        row = classify(item)
+        self.assertIsNotNone(row)
+        assert row is not None
+        self.assertEqual(row.bucket, "live")
 
     def test_owner_authored_issue_is_skipped(self) -> None:
         self.assertIsNone(classify(issue(author=OWNER)))
@@ -862,6 +943,69 @@ class RankTests(unittest.TestCase):
         self.assertEqual([issue["number"] for issue in item.closing_issues], [1, 2])
         self.assertEqual(fetch.ready_for_pr_closers(item, REPO), [1, 2])
 
+    def test_older_commit_closing_ref_is_a_closer(self) -> None:
+        from unittest.mock import patch
+
+        item = fetch.item_from_pr(
+            pr_graphql(
+                body="no keywords in the body",
+                commits={
+                    "pageInfo": {"hasPreviousPage": True, "startCursor": "c1"},
+                    "nodes": [
+                        {
+                            "commit": {
+                                "message": "tweak ci",
+                                "committedDate": "2026-08-24T00:00:00Z",
+                                "authors": {
+                                    "nodes": [{"user": {"login": "contributor"}}]
+                                },
+                            }
+                        }
+                    ],
+                },
+                closingIssuesReferences={
+                    "nodes": [
+                        {
+                            "number": 9,
+                            "title": "bug",
+                            "state": "OPEN",
+                            "body": "",
+                            "repository": {"nameWithOwner": REPO},
+                            "labels": {"nodes": [{"name": "ready-for-pr"}]},
+                            "comments": {"nodes": []},
+                        }
+                    ]
+                },
+            )
+        )
+        self.assertIsNotNone(item)
+        assert item is not None
+        self.assertEqual(fetch.ready_for_pr_closers(item, REPO), [])
+        older = {
+            "repository": {
+                "pullRequest": {
+                    "commits": {
+                        "pageInfo": {"hasPreviousPage": False},
+                        "nodes": [
+                            {
+                                "commit": {
+                                    "message": "Fixes #9",
+                                    "committedDate": "2026-08-20T00:00:00Z",
+                                    "authors": {
+                                        "nodes": [{"user": {"login": "contributor"}}]
+                                    },
+                                }
+                            }
+                        ],
+                    }
+                }
+            }
+        }
+        with patch.object(fetch, "gh_graphql", return_value=older) as gql:
+            fetch.backfill_commits(item, "acme", "tools")
+            self.assertEqual(gql.call_args.args[0], fetch.COMMIT_PAGE_QUERY)
+        self.assertEqual(fetch.ready_for_pr_closers(item, REPO), [9])
+
     def test_ready_for_pr_stamp_in_issue_body(self) -> None:
         row = classify(
             pr(
@@ -947,6 +1091,10 @@ class CliTests(unittest.TestCase):
         )
         self.assertIn("excludeUserLinked: true", fetch.CLOSING_ISSUE_PAGE_QUERY)
         self.assertIn("message", fetch.PR_LIST_QUERY)
+        self.assertIn("reviews(last: 100)", fetch.PR_LIST_QUERY)
+        self.assertIn("commits(last: 100)", fetch.PR_LIST_QUERY)
+        self.assertIn("reviews(last: 100, before: $cursor)", fetch.REVIEW_PAGE_QUERY)
+        self.assertIn("commits(last: 100, before: $cursor)", fetch.COMMIT_PAGE_QUERY)
         self.assertIn("reviewThreads(last: 40, before: $cursor)", fetch.REVIEW_THREAD_PAGE_QUERY)
         self.assertIn("comments(last: 100)", fetch.REVIEW_THREAD_PAGE_QUERY)
         self.assertIn("hasPreviousPage startCursor", fetch.REVIEW_THREAD_PAGE_QUERY)
@@ -967,6 +1115,82 @@ class CliTests(unittest.TestCase):
                 )
         self.assertIn("not found", str(ctx.exception).lower())
         self.assertIn("nope/missing", str(ctx.exception))
+
+    def test_null_graphql_nodes_are_skipped(self) -> None:
+        from unittest.mock import patch
+
+        self.assertIsNone(fetch.item_from_issue(None))
+        self.assertIsNone(fetch.item_from_pr(None))
+        parsed = fetch._parse_closing_issues(
+            [
+                None,
+                {
+                    "number": 8,
+                    "title": "bug",
+                    "state": "OPEN",
+                    "body": "",
+                    "repository": {"nameWithOwner": REPO},
+                    "labels": {"nodes": [None, {"name": "ready-for-pr"}]},
+                    "comments": {"nodes": [None, {"body": "hi"}]},
+                },
+                None,
+            ]
+        )
+        self.assertEqual(len(parsed), 1)
+        self.assertEqual(parsed[0]["number"], 8)
+        self.assertEqual(parsed[0]["labels"], ["ready-for-pr"])
+        item = fetch.item_from_pr(
+            pr_graphql(
+                closingIssuesReferences={
+                    "nodes": [
+                        None,
+                        {
+                            "number": 8,
+                            "title": "bug",
+                            "state": "OPEN",
+                            "body": "",
+                            "repository": {"nameWithOwner": REPO},
+                            "labels": {"nodes": [{"name": "ready-for-pr"}]},
+                            "comments": {"nodes": []},
+                        },
+                        None,
+                    ]
+                }
+            )
+        )
+        self.assertIsNotNone(item)
+        assert item is not None
+        self.assertEqual([issue["number"] for issue in item.closing_issues], [8])
+        with patch.object(
+            fetch,
+            "gh_graphql",
+            return_value={
+                "repository": {
+                    "issues": {
+                        "nodes": [
+                            None,
+                            {
+                                "number": 2,
+                                "title": "bug",
+                                "url": "https://example.com/i/2",
+                                "createdAt": "2026-08-21T00:00:00Z",
+                                "body": "broke",
+                                "author": {"login": "contributor"},
+                                "labels": {"nodes": []},
+                                "comments": {"pageInfo": {}, "nodes": []},
+                            },
+                            None,
+                        ],
+                        "pageInfo": {"hasNextPage": False},
+                    }
+                }
+            },
+        ):
+            nodes = fetch.paginate_nodes(
+                fetch.ISSUE_LIST_QUERY, "acme", "tools", "issues"
+            )
+        self.assertEqual(len(nodes), 1)
+        self.assertEqual(nodes[0]["number"], 2)
 
     def test_main_skips_comment_backfill_for_owner_and_bots(self) -> None:
         from io import StringIO
@@ -1037,22 +1261,32 @@ class CliTests(unittest.TestCase):
         backfilled: list[int] = []
         review_backfilled: list[int] = []
         closing_backfilled: list[int] = []
+        pr_review_backfilled: list[int] = []
+        commit_backfilled: list[int] = []
 
         def fake_comments(item, *_args):
             backfilled.append(item.number)
 
-        def fake_reviews(item, *_args):
+        def fake_threads(item, *_args):
             review_backfilled.append(item.number)
 
         def fake_closing(item, *_args):
             closing_backfilled.append(item.number)
 
+        def fake_pr_reviews(item, *_args):
+            pr_review_backfilled.append(item.number)
+
+        def fake_commits(item, *_args):
+            commit_backfilled.append(item.number)
+
         stdout = StringIO()
         with (
             patch.object(fetch, "paginate_nodes", side_effect=paginate),
             patch.object(fetch, "backfill_comments", side_effect=fake_comments),
-            patch.object(fetch, "backfill_review_threads", side_effect=fake_reviews),
+            patch.object(fetch, "backfill_review_threads", side_effect=fake_threads),
             patch.object(fetch, "backfill_closing_issues", side_effect=fake_closing),
+            patch.object(fetch, "backfill_reviews", side_effect=fake_pr_reviews),
+            patch.object(fetch, "backfill_commits", side_effect=fake_commits),
             patch.object(sys, "stdout", stdout),
         ):
             rc = fetch.main(
@@ -1069,6 +1303,8 @@ class CliTests(unittest.TestCase):
         self.assertEqual(backfilled, [2, 4])
         self.assertEqual(review_backfilled, [4])
         self.assertEqual(closing_backfilled, [4])
+        self.assertEqual(pr_review_backfilled, [4])
+        self.assertEqual(commit_backfilled, [4])
         payload = json.loads(stdout.getvalue())
         self.assertEqual([row["number"] for row in payload["issues"]], [2])
         self.assertEqual([row["number"] for row in payload["prs"]], [4])

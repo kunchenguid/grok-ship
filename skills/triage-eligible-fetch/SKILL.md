@@ -33,7 +33,7 @@ The script prints JSON: `issues` then `prs`, already ranked, already capped. Wor
 - Drops those skipped items before walking comments, so a captain with many open issues does not pay a full comment backfill every wake
 - Counts existing stamps matching `<!-- *triage: ISO8601` (`triage:`, `gh-axi-triage:`, `treehouse-triage:`)
 - Skips a stamped item whose only later activity is a firstmate-mark comment or an automation comment/review, unless that stamp is `--stale-days` old (stale-restamp)
-- Firstmate-mark comments (mark at the start of the comment) and automation comments/reviews do not reset the clock. Author comments (including inline review-thread replies on the diff) and new commits still jump the line
+- Firstmate-mark comments (mark at the start of the comment) and automation comments/reviews do not reset the clock. Author comments (including inline review-thread replies on the diff), author review summaries, and new commits still jump the line
 - Issues: unstamped and other live, newer first, then stale-restamp oldest stamp, cap `--issues` (default 5)
 - PRs: those that close an **open** same-repo ready-for-pr issue first (Fixes / Closes / Resolves / Closing / Resolving with an issue ref, including `Fixes #1, #2`), then other live, then stale, cap `--prs` (default 5). A bare `fix:` / `Closing this now` is not enough. Cross-repo refs and Development-sidebar user links do not count. GitHub's closing list is keyword-closing refs only (`excludeUserLinked`).
 
