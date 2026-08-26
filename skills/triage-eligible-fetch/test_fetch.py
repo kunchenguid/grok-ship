@@ -1367,6 +1367,25 @@ class CliTests(unittest.TestCase):
         self.assertIn("Cannot-tell blocks auto-merge", vision)
         self.assertIn("Do not ignore some undecided rules", vision)
         self.assertIn("do not auto-merge", vision)
+        readme = Path(__file__).resolve().parents[2] / "README.md"
+        readme_text = readme.read_text()
+        self.assertIn("factory ships never merge without your word", readme_text)
+        self.assertIn("wired triage crewmate may auto-merge", readme_text)
+        self.assertIn("corrective or opt-in", readme_text)
+        self.assertIn("no cannot-tell", readme_text)
+        self.assertIn("not default-behavior", readme_text)
+        self.assertIn("not security", readme_text)
+        self.assertIn("May auto-merge only when all of these hold", triage_text)
+        self.assertIn(
+            "Factory ships never merge without the captain's explicit word",
+            charter,
+        )
+        self.assertIn("wired triage crewmate may auto-merge", charter)
+        self.assertIn("no cannot-tell", charter)
+        ship = (Path(__file__).resolve().parents[2] / "GROK_SHIP.md").read_text()
+        self.assertIn("Factory ships never merge without the captain's word", ship)
+        self.assertIn("wired triage crewmate may auto-merge", ship)
+        self.assertIn("no cannot-tell", ship)
 
     def test_parse_repo(self) -> None:
         self.assertEqual(fetch.parse_repo("acme/tools"), ("acme", "tools"))

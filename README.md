@@ -37,7 +37,7 @@ After install, talk only to Firstmate - the one agent you chat with in the facto
 - **Per-project crewmates** - each project or project area gets a persistent crewmate that drives Cursor cloud agents.
 - **Review before any PR** - after a ship cloud agent pushes a branch, a fresh adversarial review reads it through the project's forge CLI. No pull request until that pass is clean.
 - **Local sqlite backlog** - chat is not the source of truth. Projects and tasks live in a sqlite database on the shared computer.
-- **You merge** - no bot merges a pull request on its own. Merge only on your explicit word, and never while checks are red.
+- **You merge** - factory ships never merge without your word, and never while checks are red. A wired triage crewmate may auto-merge corrective or opt-in work only when CI is green, VISION is aligned with no cannot-tell, and the change is not default-behavior and not security.
 - **Forge-agnostic** - detect GitHub, GitLab, Bitbucket, or Cursor Origin. Do not assume GitHub.
 
 ## Quick Start
