@@ -59,11 +59,11 @@ query($owner: String!, $name: String!, $cursor: String) {
       pageInfo { hasNextPage endCursor }
       nodes {
         number title url createdAt updatedAt body
-        author { login }
+        author { login __typename }
         labels(first: 20) { nodes { name } }
         comments(last: 50, orderBy: {field: UPDATED_AT, direction: ASC}) {
           pageInfo { hasPreviousPage startCursor }
-          nodes { author { login } body createdAt }
+          nodes { author { login __typename } body createdAt }
         }
       }
     }
@@ -78,35 +78,10 @@ query($owner: String!, $name: String!, $cursor: String) {
       pageInfo { hasNextPage endCursor }
       nodes {
         number title url createdAt updatedAt body
-        author { login }
+        author { login __typename }
         comments(last: 50, orderBy: {field: UPDATED_AT, direction: ASC}) {
           pageInfo { hasPreviousPage startCursor }
-          nodes { author { login } body createdAt }
-        }
-        reviews(last: 100) {
-          pageInfo { hasPreviousPage startCursor }
-          nodes { author { login } body createdAt }
-        }
-        commits(last: 100) {
-          pageInfo { hasPreviousPage startCursor }
-          nodes {
-            commit {
-              message
-              committedDate
-              authors(first: 5) { nodes { user { login } } }
-            }
-          }
-        }
-        closingIssuesReferences(first: 50, excludeUserLinked: true) {
-          pageInfo { hasNextPage endCursor }
-          nodes {
-            number title state body
-            repository { nameWithOwner }
-            labels(first: 20) { nodes { name } }
-            comments(last: 20) {
-              nodes { body createdAt }
-            }
-          }
+          nodes { author { login __typename } body createdAt }
         }
       }
     }
@@ -121,13 +96,13 @@ query($owner: String!, $name: String!, $number: Int!, $cursor: String) {
       ... on Issue {
         comments(last: 50, before: $cursor, orderBy: {field: UPDATED_AT, direction: ASC}) {
           pageInfo { hasPreviousPage startCursor }
-          nodes { author { login } body createdAt }
+          nodes { author { login __typename } body createdAt }
         }
       }
       ... on PullRequest {
         comments(last: 50, before: $cursor, orderBy: {field: UPDATED_AT, direction: ASC}) {
           pageInfo { hasPreviousPage startCursor }
-          nodes { author { login } body createdAt }
+          nodes { author { login __typename } body createdAt }
         }
       }
     }
@@ -145,7 +120,7 @@ query($owner: String!, $name: String!, $number: Int!, $cursor: String) {
           id
           comments(last: 100) {
             pageInfo { hasPreviousPage startCursor }
-            nodes { author { login } body createdAt }
+            nodes { author { login __typename } body createdAt }
           }
         }
       }
@@ -160,7 +135,7 @@ query($id: ID!, $cursor: String) {
     ... on PullRequestReviewThread {
       comments(last: 100, before: $cursor) {
         pageInfo { hasPreviousPage startCursor }
-        nodes { author { login } body createdAt }
+        nodes { author { login __typename } body createdAt }
       }
     }
   }
@@ -193,7 +168,7 @@ query($owner: String!, $name: String!, $number: Int!, $cursor: String) {
     pullRequest(number: $number) {
       reviews(last: 100, before: $cursor) {
         pageInfo { hasPreviousPage startCursor }
-        nodes { author { login } body createdAt }
+        nodes { author { login __typename } body createdAt }
       }
     }
   }
@@ -230,7 +205,9 @@ def parse_iso(value: str) -> datetime:
     return dt.astimezone(timezone.utc)
 
 
-def is_automation(login: str | None) -> bool:
+def is_automation(login: str | None, typename: str | None = None) -> bool:
+    if (typename or "").lower() == "bot":
+        return True
     if not login:
         return False
     low = login.lower()
@@ -250,7 +227,7 @@ def skip_owner(login: str | None, owner: str, body: str | None, title: str | Non
 
 def skip_before_classify(item: Item, owner: str) -> bool:
     """True when classify_item would drop this item before reading comments."""
-    if is_automation(item.author):
+    if is_automation(item.author, item.author_typename):
         return True
     return skip_owner(item.author, owner, item.body, item.title)
 
@@ -274,7 +251,9 @@ def _ref_is_local(match: re.Match[str], repo: str | None) -> bool:
     return f"{owner}/{name}".lower() == repo.lower()
 
 
-def find_stamps(text: str | None) -> list[tuple[datetime, str | None]]:
+def find_stamps(
+    text: str | None, *, now: datetime | None = None
+) -> list[tuple[datetime, str | None]]:
     stamps: list[tuple[datetime, str | None]] = []
     if not text:
         return stamps
@@ -283,6 +262,8 @@ def find_stamps(text: str | None) -> list[tuple[datetime, str | None]]:
             when = parse_iso(match.group(1))
         except ValueError:
             continue
+        if now is not None and when > now:
+            continue
         window = text[match.end() : match.end() + 240]
         outcome_match = OUTCOME_RE.search(window)
         outcome = outcome_match.group(1) if outcome_match else None
@@ -290,10 +271,12 @@ def find_stamps(text: str | None) -> list[tuple[datetime, str | None]]:
     return stamps
 
 
-def latest_stamp(texts: Iterable[str | None]) -> tuple[datetime, str | None] | None:
+def latest_stamp(
+    texts: Iterable[str | None], *, now: datetime | None = None
+) -> tuple[datetime, str | None] | None:
     found: list[tuple[datetime, str | None]] = []
     for text in texts:
-        found.extend(find_stamps(text))
+        found.extend(find_stamps(text, now=now))
     if not found:
         return None
     return max(found, key=lambda item: item[0])
@@ -331,7 +314,7 @@ def is_clock_noise(activity: Activity, firstmate_mark: str) -> bool:
     """Firstmate-mark and automation comments/reviews do not reset the clock."""
     if activity.kind not in {"comment", "review"}:
         return False
-    if is_automation(activity.login):
+    if is_automation(activity.login, activity.typename):
         return True
     return is_firstmate_text(activity.body, firstmate_mark)
 
@@ -391,6 +374,7 @@ class Activity:
     kind: str
     login: str | None
     body: str | None = None
+    typename: str | None = None
 
 
 @dataclass
@@ -414,6 +398,7 @@ class Item:
     has_older_reviews: bool = False
     commit_cursor: str | None = None
     has_older_commits: bool = False
+    author_typename: str | None = None
 
 
 @dataclass(frozen=True)
@@ -434,13 +419,14 @@ def classify_item(
     now: datetime,
     repo: str,
 ) -> Classified | None:
-    if is_automation(item.author):
+    if is_automation(item.author, item.author_typename):
         return None
     if skip_owner(item.author, owner, item.body, item.title):
         return None
 
     stamp = latest_stamp(
-        [item.body, *(activity.body for activity in item.activities)]
+        [item.body, *(activity.body for activity in item.activities)],
+        now=now,
     )
     later_real = False
     if stamp is not None:
@@ -524,6 +510,12 @@ def _actor_login(node: dict[str, Any] | None) -> str | None:
     return node.get("login")
 
 
+def _actor_typename(node: dict[str, Any] | None) -> str | None:
+    if not node:
+        return None
+    return node.get("__typename")
+
+
 def _parse_comments(nodes: Iterable[dict[str, Any] | None]) -> list[Activity]:
     activities: list[Activity] = []
     for node in nodes:
@@ -533,12 +525,14 @@ def _parse_comments(nodes: Iterable[dict[str, Any] | None]) -> list[Activity]:
             when = parse_iso(node["createdAt"])
         except (KeyError, TypeError, ValueError):
             continue
+        author = node.get("author")
         activities.append(
             Activity(
                 when=when,
                 kind="comment",
-                login=_actor_login(node.get("author")),
+                login=_actor_login(author),
                 body=node.get("body") or "",
+                typename=_actor_typename(author),
             )
         )
     return activities
@@ -561,12 +555,14 @@ def _parse_reviews(nodes: Iterable[dict[str, Any] | None]) -> list[Activity]:
             when = parse_iso(review["createdAt"])
         except (KeyError, TypeError, ValueError):
             continue
+        author = review.get("author")
         activities.append(
             Activity(
                 when=when,
                 kind="review",
-                login=_actor_login(review.get("author")),
+                login=_actor_login(author),
                 body=review.get("body") or "",
+                typename=_actor_typename(author),
             )
         )
     return activities
@@ -618,6 +614,7 @@ def item_from_issue(node: dict[str, Any] | None) -> Item | None:
         activities=_parse_comments(comments.get("nodes") or []),
         comment_cursor=page.get("startCursor"),
         has_older_comments=bool(page.get("hasPreviousPage")),
+        author_typename=_actor_typename(node.get("author")),
     )
 
 
@@ -651,15 +648,36 @@ def item_from_pr(node: dict[str, Any] | None) -> Item | None:
     comments = node.get("comments") or {}
     page = comments.get("pageInfo") or {}
     activities = _parse_comments(comments.get("nodes") or [])
-    reviews = node.get("reviews") or {}
-    review_page = reviews.get("pageInfo") or {}
-    activities.extend(_parse_reviews(reviews.get("nodes") or []))
-    commits = node.get("commits") or {}
-    commit_page = commits.get("pageInfo") or {}
-    commit_activities, commit_messages = _parse_commits(commits.get("nodes") or [])
-    activities.extend(commit_activities)
-    closing_conn = node.get("closingIssuesReferences") or {}
-    closing_page = closing_conn.get("pageInfo") or {}
+    if "reviews" in node:
+        reviews = node.get("reviews") or {}
+        review_page = reviews.get("pageInfo") or {}
+        activities.extend(_parse_reviews(reviews.get("nodes") or []))
+        review_cursor = review_page.get("startCursor")
+        has_older_reviews = bool(review_page.get("hasPreviousPage"))
+    else:
+        review_cursor = None
+        has_older_reviews = True
+    if "commits" in node:
+        commits = node.get("commits") or {}
+        commit_page = commits.get("pageInfo") or {}
+        commit_activities, commit_messages = _parse_commits(commits.get("nodes") or [])
+        activities.extend(commit_activities)
+        commit_cursor = commit_page.get("startCursor")
+        has_older_commits = bool(commit_page.get("hasPreviousPage"))
+    else:
+        commit_messages = []
+        commit_cursor = None
+        has_older_commits = True
+    if "closingIssuesReferences" in node:
+        closing_conn = node.get("closingIssuesReferences") or {}
+        closing_page = closing_conn.get("pageInfo") or {}
+        closing_issues = _parse_closing_issues(closing_conn.get("nodes") or [])
+        closing_cursor = closing_page.get("endCursor")
+        has_more_closing = bool(closing_page.get("hasNextPage"))
+    else:
+        closing_issues = []
+        closing_cursor = None
+        has_more_closing = True
     return Item(
         number=int(node["number"]),
         title=node.get("title") or "",
@@ -669,25 +687,26 @@ def item_from_pr(node: dict[str, Any] | None) -> Item | None:
         body=node.get("body") or "",
         kind="pr",
         activities=activities,
-        closing_issues=_parse_closing_issues(closing_conn.get("nodes") or []),
+        closing_issues=closing_issues,
         commit_messages=commit_messages,
         comment_cursor=page.get("startCursor"),
         has_older_comments=bool(page.get("hasPreviousPage")),
-        closing_cursor=closing_page.get("endCursor"),
-        has_more_closing=bool(closing_page.get("hasNextPage")),
-        review_cursor=review_page.get("startCursor"),
-        has_older_reviews=bool(review_page.get("hasPreviousPage")),
-        commit_cursor=commit_page.get("startCursor"),
-        has_older_commits=bool(commit_page.get("hasPreviousPage")),
+        closing_cursor=closing_cursor,
+        has_more_closing=has_more_closing,
+        review_cursor=review_cursor,
+        has_older_reviews=has_older_reviews,
+        commit_cursor=commit_cursor,
+        has_older_commits=has_older_commits,
+        author_typename=_actor_typename(node.get("author")),
     )
 
 
 def backfill_reviews(item: Item, repo_owner: str, repo_name: str) -> None:
-    """Walk older review summaries so a bot burst cannot hide an author review."""
+    """Walk review summaries, including the first page when the list query omitted them."""
     if item.kind != "pr":
         return
     cursor = item.review_cursor
-    while item.has_older_reviews and cursor:
+    while item.has_older_reviews:
         data = gh_graphql(
             REVIEW_PAGE_QUERY,
             {
@@ -704,14 +723,16 @@ def backfill_reviews(item: Item, repo_owner: str, repo_name: str) -> None:
         item.has_older_reviews = bool(page.get("hasPreviousPage"))
         cursor = page.get("startCursor")
         item.review_cursor = cursor
+        if not item.has_older_reviews or not cursor:
+            break
 
 
 def backfill_commits(item: Item, repo_owner: str, repo_name: str) -> None:
-    """Walk older commits so a Fixes/Closes/Resolves #N is not lost off the newest page."""
+    """Walk commits, including the first page when the list query omitted them."""
     if item.kind != "pr":
         return
     cursor = item.commit_cursor
-    while item.has_older_commits and cursor:
+    while item.has_older_commits:
         data = gh_graphql(
             COMMIT_PAGE_QUERY,
             {
@@ -730,6 +751,8 @@ def backfill_commits(item: Item, repo_owner: str, repo_name: str) -> None:
         item.has_older_commits = bool(page.get("hasPreviousPage"))
         cursor = page.get("startCursor")
         item.commit_cursor = cursor
+        if not item.has_older_commits or not cursor:
+            break
 
 
 def backfill_comments(item: Item, repo_owner: str, repo_name: str) -> None:
@@ -760,7 +783,7 @@ def backfill_closing_issues(item: Item, repo_owner: str, repo_name: str) -> None
     if item.kind != "pr":
         return
     cursor = item.closing_cursor
-    while item.has_more_closing and cursor:
+    while item.has_more_closing:
         data = gh_graphql(
             CLOSING_ISSUE_PAGE_QUERY,
             {
@@ -777,6 +800,8 @@ def backfill_closing_issues(item: Item, repo_owner: str, repo_name: str) -> None
         item.has_more_closing = bool(page.get("hasNextPage"))
         cursor = page.get("endCursor")
         item.closing_cursor = cursor
+        if not item.has_more_closing or not cursor:
+            break
 
 
 def _backfill_thread_comments(item: Item, thread: dict[str, Any]) -> None:

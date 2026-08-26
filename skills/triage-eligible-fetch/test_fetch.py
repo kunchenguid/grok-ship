@@ -22,8 +22,8 @@ REPO = "acme/tools"
 MARK = "Speaking as Firstmate"
 
 
-def activity(when: datetime, kind: str, body: str | None = None, login: str | None = "other") -> fetch.Activity:
-    return fetch.Activity(when=when, kind=kind, login=login, body=body)
+def activity(when: datetime, kind: str, body: str | None = None, login: str | None = "other", typename: str | None = None) -> fetch.Activity:
+    return fetch.Activity(when=when, kind=kind, login=login, body=body, typename=typename)
 
 
 def issue(**kwargs) -> fetch.Item:
@@ -162,6 +162,11 @@ class SkipTests(unittest.TestCase):
         self.assertTrue(fetch.is_automation("Greptile"))
         self.assertFalse(fetch.is_automation("human-contributor"))
         self.assertFalse(fetch.is_automation(OWNER))
+        self.assertFalse(fetch.is_automation("codecov"))
+        self.assertFalse(fetch.is_automation("vercel"))
+        self.assertTrue(fetch.is_automation("codecov", "Bot"))
+        self.assertTrue(fetch.is_automation("vercel", "Bot"))
+        self.assertFalse(fetch.is_automation("codecov", "User"))
 
     def test_no_hardcoded_kun_strings(self) -> None:
         source = Path(__file__).with_name("fetch.py").read_text()
@@ -316,6 +321,62 @@ class ClockTests(unittest.TestCase):
             )
         )
         self.assertIsNone(row)
+
+    def test_graphql_bot_comment_after_stamp_is_not_live(self) -> None:
+        stamp_at = NOW - timedelta(days=3)
+        body = f"<!-- triage: {stamp_at.strftime('%Y-%m-%dT%H:%M:%SZ')} outcome=waiting-author -->"
+        row = classify(
+            issue(
+                activities=[
+                    activity(stamp_at, "comment", body, OWNER),
+                    activity(
+                        NOW - timedelta(hours=1),
+                        "comment",
+                        "Coverage after this change.",
+                        "codecov",
+                        "Bot",
+                    ),
+                ]
+            )
+        )
+        self.assertIsNone(row)
+
+    def test_graphql_bot_review_after_stamp_is_not_live(self) -> None:
+        stamp_at = NOW - timedelta(days=3)
+        body = f"<!-- triage: {stamp_at.strftime('%Y-%m-%dT%H:%M:%SZ')} outcome=waiting-author -->"
+        row = classify(
+            pr(
+                activities=[
+                    activity(stamp_at, "comment", body, OWNER),
+                    activity(
+                        NOW - timedelta(hours=1),
+                        "review",
+                        "Ready to deploy.",
+                        "vercel",
+                        "Bot",
+                    ),
+                ]
+            )
+        )
+        self.assertIsNone(row)
+
+    def test_future_stamp_is_ignored(self) -> None:
+        future = "<!-- triage: 2099-01-01T00:00:00Z outcome=waiting-author -->"
+        self.assertEqual(fetch.find_stamps(future, now=NOW), [])
+        row = classify(issue(body=future))
+        self.assertIsNotNone(row)
+        assert row is not None
+        self.assertEqual(row.bucket, "unstamped")
+        stamp_at = NOW - timedelta(days=20)
+        real = (
+            f"<!-- triage: {stamp_at.strftime('%Y-%m-%dT%H:%M:%SZ')} "
+            "outcome=waiting-author -->"
+        )
+        stale = classify(issue(body=future + "\n" + real))
+        self.assertIsNotNone(stale)
+        assert stale is not None
+        self.assertEqual(stale.bucket, "stale-restamp")
+        self.assertEqual(stale.stamp_at, stamp_at)
 
     def test_older_author_review_makes_live(self) -> None:
         stamp_at = NOW - timedelta(days=1)
@@ -1006,6 +1067,93 @@ class RankTests(unittest.TestCase):
             self.assertEqual(gql.call_args.args[0], fetch.COMMIT_PAGE_QUERY)
         self.assertEqual(fetch.ready_for_pr_closers(item, REPO), [9])
 
+    def test_backfill_loads_when_list_query_omits_nested_connections(self) -> None:
+        from unittest.mock import patch
+
+        item = fetch.item_from_pr(
+            {
+                "number": 10,
+                "title": "fix",
+                "url": "https://github.com/acme/tools/pull/10",
+                "createdAt": "2026-08-20T00:00:00Z",
+                "body": "Fixes #9",
+                "author": {"login": "contributor", "__typename": "User"},
+                "comments": {"pageInfo": {}, "nodes": []},
+            }
+        )
+        self.assertIsNotNone(item)
+        assert item is not None
+        self.assertTrue(item.has_older_reviews)
+        self.assertTrue(item.has_older_commits)
+        self.assertTrue(item.has_more_closing)
+        self.assertEqual(item.author_typename, "User")
+        review_page = {
+            "repository": {
+                "pullRequest": {
+                    "reviews": {
+                        "pageInfo": {"hasPreviousPage": False},
+                        "nodes": [
+                            {
+                                "author": {"login": "codecov", "__typename": "Bot"},
+                                "body": "coverage",
+                                "createdAt": "2026-08-24T12:00:00Z",
+                            }
+                        ],
+                    }
+                }
+            }
+        }
+        commit_page = {
+            "repository": {
+                "pullRequest": {
+                    "commits": {
+                        "pageInfo": {"hasPreviousPage": False},
+                        "nodes": [
+                            {
+                                "commit": {
+                                    "message": "Fixes #9",
+                                    "committedDate": "2026-08-20T00:00:00Z",
+                                    "authors": {
+                                        "nodes": [{"user": {"login": "contributor"}}]
+                                    },
+                                }
+                            }
+                        ],
+                    }
+                }
+            }
+        }
+        closing_page = {
+            "repository": {
+                "pullRequest": {
+                    "closingIssuesReferences": {
+                        "pageInfo": {"hasNextPage": False},
+                        "nodes": [
+                            {
+                                "number": 9,
+                                "title": "bug",
+                                "state": "OPEN",
+                                "body": "",
+                                "repository": {"nameWithOwner": REPO},
+                                "labels": {"nodes": [{"name": "ready-for-pr"}]},
+                                "comments": {"nodes": []},
+                            }
+                        ],
+                    }
+                }
+            }
+        }
+        with patch.object(fetch, "gh_graphql", return_value=review_page):
+            fetch.backfill_reviews(item, "acme", "tools")
+        self.assertEqual(item.activities[-1].login, "codecov")
+        self.assertEqual(item.activities[-1].typename, "Bot")
+        self.assertTrue(fetch.is_clock_noise(item.activities[-1], MARK))
+        with patch.object(fetch, "gh_graphql", return_value=commit_page):
+            fetch.backfill_commits(item, "acme", "tools")
+        with patch.object(fetch, "gh_graphql", return_value=closing_page):
+            fetch.backfill_closing_issues(item, "acme", "tools")
+        self.assertEqual(fetch.ready_for_pr_closers(item, REPO), [9])
+
     def test_ready_for_pr_stamp_in_issue_body(self) -> None:
         row = classify(
             pr(
@@ -1083,16 +1231,21 @@ class CliTests(unittest.TestCase):
             fetch.COMMENT_PAGE_QUERY,
         )
         self.assertIn("before: $cursor, orderBy:", fetch.COMMENT_PAGE_QUERY)
-        self.assertIn("number title state body", fetch.PR_LIST_QUERY)
-        self.assertIn("repository { nameWithOwner }", fetch.PR_LIST_QUERY)
+        self.assertNotIn("reviews(", fetch.PR_LIST_QUERY)
+        self.assertNotIn("commits(", fetch.PR_LIST_QUERY)
+        self.assertNotIn("closingIssuesReferences", fetch.PR_LIST_QUERY)
+        self.assertIn("author { login __typename }", fetch.PR_LIST_QUERY)
+        self.assertIn("author { login __typename }", fetch.ISSUE_LIST_QUERY)
+        self.assertIn("author { login __typename }", fetch.REVIEW_PAGE_QUERY)
+        self.assertIn("author { login __typename }", fetch.COMMENT_PAGE_QUERY)
+        self.assertIn("number title state body", fetch.CLOSING_ISSUE_PAGE_QUERY)
+        self.assertIn("repository { nameWithOwner }", fetch.CLOSING_ISSUE_PAGE_QUERY)
         self.assertIn(
-            "closingIssuesReferences(first: 50, excludeUserLinked: true)",
-            fetch.PR_LIST_QUERY,
+            "closingIssuesReferences(first: 50, after: $cursor, excludeUserLinked: true)",
+            fetch.CLOSING_ISSUE_PAGE_QUERY,
         )
         self.assertIn("excludeUserLinked: true", fetch.CLOSING_ISSUE_PAGE_QUERY)
-        self.assertIn("message", fetch.PR_LIST_QUERY)
-        self.assertIn("reviews(last: 100)", fetch.PR_LIST_QUERY)
-        self.assertIn("commits(last: 100)", fetch.PR_LIST_QUERY)
+        self.assertIn("message", fetch.COMMIT_PAGE_QUERY)
         self.assertIn("reviews(last: 100, before: $cursor)", fetch.REVIEW_PAGE_QUERY)
         self.assertIn("commits(last: 100, before: $cursor)", fetch.COMMIT_PAGE_QUERY)
         self.assertIn("reviewThreads(last: 40, before: $cursor)", fetch.REVIEW_THREAD_PAGE_QUERY)
