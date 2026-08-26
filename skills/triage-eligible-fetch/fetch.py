@@ -488,6 +488,23 @@ def rank_prs(classified: list[Classified], cap: int) -> list[Classified]:
     return (closers + other_live + stale)[:cap]
 
 
+def _load_json_object(raw: str | bytes | None) -> dict[str, Any] | None:
+    if not raw:
+        return None
+    try:
+        payload = json.loads(raw)
+    except (json.JSONDecodeError, TypeError, ValueError):
+        return None
+    return payload if isinstance(payload, dict) else None
+
+
+def _graphql_data(payload: dict[str, Any] | None) -> dict[str, Any] | None:
+    if not payload:
+        return None
+    data = payload.get("data")
+    return data if isinstance(data, dict) else None
+
+
 def gh_graphql(query: str, variables: dict[str, Any]) -> dict[str, Any]:
     cmd = ["gh", "api", "graphql", "-f", f"query={query}"]
     for key, value in variables.items():
@@ -504,12 +521,21 @@ def gh_graphql(query: str, variables: dict[str, Any]) -> dict[str, Any]:
     except FileNotFoundError as exc:
         raise SystemExit("gh is required") from exc
     except subprocess.CalledProcessError as exc:
+        # `gh api graphql` exits 1 when the payload includes errors, even if
+        # data is present (live: data + NOT_FOUND). Skip-null handling needs
+        # that data; only fail here when stdout has no usable data.
+        data = _graphql_data(_load_json_object(exc.stdout))
+        if data is not None:
+            return data
         err = (exc.stderr or exc.stdout or str(exc)).strip()
         raise SystemExit(f"gh graphql failed: {err}") from exc
-    payload = json.loads(completed.stdout)
+    payload = _load_json_object(completed.stdout) or {}
+    data = _graphql_data(payload)
+    if data is not None:
+        return data
     if payload.get("errors"):
         raise SystemExit(f"gh graphql errors: {payload['errors']}")
-    return payload["data"]
+    raise SystemExit("gh graphql failed: missing data")
 
 
 def _actor_login(node: dict[str, Any] | None) -> str | None:

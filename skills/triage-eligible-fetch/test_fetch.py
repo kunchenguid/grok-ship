@@ -1385,6 +1385,207 @@ class CliTests(unittest.TestCase):
         self.assertIn("not found", str(ctx.exception).lower())
         self.assertIn("nope/missing", str(ctx.exception))
 
+    def test_graphql_partial_data_with_errors_is_usable(self) -> None:
+        import subprocess
+        from unittest.mock import patch
+
+        payload = {
+            "data": {
+                "repository": {
+                    "issues": {
+                        "nodes": [
+                            None,
+                            {
+                                "number": 2,
+                                "title": "bug",
+                                "url": "https://example.com/i/2",
+                                "createdAt": "2026-08-21T00:00:00Z",
+                                "body": "broke",
+                                "author": {"login": "contributor"},
+                                "labels": {"nodes": []},
+                                "comments": {"pageInfo": {}, "nodes": []},
+                            },
+                        ],
+                        "pageInfo": {"hasNextPage": False},
+                    }
+                }
+            },
+            "errors": [
+                {
+                    "type": "NOT_FOUND",
+                    "path": ["repository", "issues", "nodes", 0],
+                    "message": "Could not resolve to an Issue with the number of 1.",
+                }
+            ],
+        }
+        err = subprocess.CalledProcessError(
+            1,
+            ["gh", "api", "graphql"],
+            output=json.dumps(payload),
+            stderr="gh: GraphQL: Not Found (repository.issues.nodes.0)",
+        )
+        with patch.object(fetch.subprocess, "run", side_effect=err):
+            nodes = fetch.paginate_nodes(
+                fetch.ISSUE_LIST_QUERY, "acme", "tools", "issues"
+            )
+        self.assertEqual(len(nodes), 1)
+        self.assertEqual(nodes[0]["number"], 2)
+
+    def test_graphql_errors_with_null_target_repo_still_fail(self) -> None:
+        import subprocess
+        from unittest.mock import patch
+
+        payload = {
+            "data": {"repository": None},
+            "errors": [
+                {
+                    "type": "NOT_FOUND",
+                    "path": ["repository"],
+                    "message": "Could not resolve to a Repository",
+                }
+            ],
+        }
+        err = subprocess.CalledProcessError(
+            1,
+            ["gh", "api", "graphql"],
+            output=json.dumps(payload),
+            stderr="gh: GraphQL: Could not resolve to a Repository (repository)",
+        )
+        with patch.object(fetch.subprocess, "run", side_effect=err):
+            with self.assertRaises(SystemExit) as ctx:
+                fetch.paginate_nodes(
+                    fetch.ISSUE_LIST_QUERY, "nope", "missing", "issues"
+                )
+        self.assertIn("not found", str(ctx.exception).lower())
+        self.assertIn("nope/missing", str(ctx.exception))
+
+    def test_graphql_errors_without_data_still_fail(self) -> None:
+        import subprocess
+        from unittest.mock import patch
+
+        err = subprocess.CalledProcessError(
+            1,
+            ["gh", "api", "graphql"],
+            output="",
+            stderr="HTTP 401: Bad credentials",
+        )
+        with patch.object(fetch.subprocess, "run", side_effect=err):
+            with self.assertRaises(SystemExit) as ctx:
+                fetch.gh_graphql("query { viewer { login } }", {})
+        self.assertIn("gh graphql failed", str(ctx.exception))
+        self.assertIn("401", str(ctx.exception))
+
+    def test_inaccessible_closing_issue_does_not_abort_wake(self) -> None:
+        import subprocess
+        from unittest.mock import patch
+
+        item = fetch.item_from_pr(
+            pr_graphql(
+                body="Fixes #1",
+                closingIssuesReferences={
+                    "pageInfo": {"hasNextPage": True, "endCursor": "c1"},
+                    "nodes": [],
+                },
+            )
+        )
+        payload = {
+            "data": {
+                "repository": {
+                    "pullRequest": {
+                        "closingIssuesReferences": {
+                            "pageInfo": {"hasNextPage": False},
+                            "nodes": [
+                                None,
+                                {
+                                    "number": 1,
+                                    "title": "one",
+                                    "state": "OPEN",
+                                    "body": "",
+                                    "repository": {"nameWithOwner": REPO},
+                                    "labels": {"nodes": [{"name": "ready-for-pr"}]},
+                                    "comments": {"nodes": []},
+                                },
+                            ],
+                        }
+                    }
+                }
+            },
+            "errors": [
+                {
+                    "type": "NOT_FOUND",
+                    "path": [
+                        "repository",
+                        "pullRequest",
+                        "closingIssuesReferences",
+                        "nodes",
+                        0,
+                    ],
+                    "message": "Could not resolve to an Issue with the number of 99.",
+                }
+            ],
+        }
+        err = subprocess.CalledProcessError(
+            1,
+            ["gh", "api", "graphql"],
+            output=json.dumps(payload),
+            stderr="gh: GraphQL: Not Found (repository.pullRequest.closingIssuesReferences.nodes.0)",
+        )
+        with patch.object(fetch.subprocess, "run", side_effect=err):
+            fetch.backfill_closing_issues(item, "acme", "tools")
+        self.assertEqual([issue["number"] for issue in item.closing_issues], [1])
+        self.assertEqual(fetch.ready_for_pr_closers(item, REPO, now=NOW), [1])
+
+    def test_foreign_closer_comment_page_not_found_does_not_abort(self) -> None:
+        import subprocess
+        from unittest.mock import patch
+
+        item = fetch.item_from_pr(
+            pr_graphql(
+                body="Fixes #9",
+                closingIssuesReferences={
+                    "nodes": [
+                        {
+                            "number": 9,
+                            "title": "bug",
+                            "state": "OPEN",
+                            "body": "",
+                            "repository": {"nameWithOwner": "other/repo"},
+                            "labels": {"nodes": []},
+                            "comments": {
+                                "pageInfo": {
+                                    "hasPreviousPage": True,
+                                    "startCursor": "c1",
+                                },
+                                "nodes": [{"body": "no stamp here"}],
+                            },
+                        }
+                    ]
+                },
+            )
+        )
+        self.assertIsNotNone(item)
+        assert item is not None
+        payload = {
+            "data": {"repository": None},
+            "errors": [
+                {
+                    "type": "NOT_FOUND",
+                    "path": ["repository"],
+                    "message": "Could not resolve to a Repository with the name 'other/repo'.",
+                }
+            ],
+        }
+        err = subprocess.CalledProcessError(
+            1,
+            ["gh", "api", "graphql"],
+            output=json.dumps(payload),
+            stderr="gh: GraphQL: Could not resolve to a Repository (repository)",
+        )
+        with patch.object(fetch.subprocess, "run", side_effect=err):
+            fetch.backfill_closing_issue_comments(item)
+        self.assertEqual(item.closing_issues[0]["comment_bodies"], ["no stamp here"])
+        self.assertFalse(item.closing_issues[0]["has_older_comments"])
+
     def test_null_graphql_nodes_are_skipped(self) -> None:
         from unittest.mock import patch
 
