@@ -20,6 +20,13 @@ Cannot-tell blocks auto-merge. Any VISION rule that is `cannot tell`, inconclusi
 
 No `VISION.md` means you still classify the work; you just have no vision file to cite.
 
+Before any merge, close-as-decided, or captain-flag, write a contract-class verdict: restore | new-default | opt-in | cannot-tell.
+- restore: the unconfigured run now matches what the product already promised (docs, VISION, existing default path). Auto-merge when otherwise ready.
+- new-default: the unconfigured run now does something that promise did not include (new path, reorder, always-on). No auto-merge. Flag Firstmate when otherwise ready.
+- opt-in: the new behavior stays off unless the user turns it on. Changing a default-on setting, or shipping a new default-on config, is new-default. Auto-merge when otherwise ready.
+- cannot-tell: no auto-merge. Flag Firstmate when otherwise ready.
+A VISION motive or "this is a bugfix" does not turn new-default into restore. Restoring means the old default path was already specified and broken. Replacing the specified default path is new-default. Write this next to the VISION per-rule verdict. This is the required verdict next to VISION, not a replacement of Classes.
+
 ## Classes
 
 - **Security** — flag Firstmate immediately. Do not auto-merge. Do not stale-close while the captain flag is still owed.
@@ -31,7 +38,7 @@ Factory ships on the `GROK_BOT_CREWMATE.md` path still need the captain's word. 
 
 ## Ready vs not
 
-May auto-merge only when all of these hold: class is corrective or opt-in; VISION has no `does not align` and no `cannot tell` / inconclusive / undecided rule; CI green; review is safe; not default-behavior; not security; not a captain hold; not waiting on the author.
+May auto-merge only when all of these hold: class is corrective or opt-in; contract-class is restore or opt-in; VISION has no `does not align` and no `cannot tell` / inconclusive / undecided rule; CI green; review is safe; not default-behavior; not security; not new-default; not cannot-tell; not a captain hold; not waiting on the author. new-default is no auto-merge even if someone would have called it corrective.
 
 Author and CI blockers stay off the captain desk: no-mistakes failing, CI red, waiting on author. Comment, stamp, stop.
 

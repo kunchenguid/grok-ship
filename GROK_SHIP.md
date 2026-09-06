@@ -10,7 +10,7 @@ This file is an installer. Do not summarize.
 - A Firstmate the captain talks to from then on
 - Global skills: lavish-session, adversarial-review, project-management, ahoy
 - A local sqlite database for projects and tasks
-- A crewmate template for later, per project. Repo triage is not part of this install; if asked later, Firstmate can sign on a triage crewmate. Factory ships never merge without the captain's word; a wired triage crewmate may auto-merge corrective or opt-in work only (green CI, VISION aligned with no cannot-tell, not default-behavior, not security).
+- A crewmate template for later, per project. Repo triage is not part of this install; if asked later, Firstmate can sign on a triage crewmate. Factory ships never merge without the captain's word; a wired triage crewmate may auto-merge corrective or opt-in work only (green CI, VISION aligned with no cannot-tell, not default-behavior, not security, not new-default, not cannot-tell).
 
 ## The three computers
 
