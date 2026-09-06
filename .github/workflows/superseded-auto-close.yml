@@ -12,7 +12,8 @@ permissions:
 
 jobs:
   close-as-superseded:
-    if: github.actor != 'github-actions[bot]'
+    # Skip workflow loops and owner/maintenance issues or PRs.
+    if: github.actor != 'github-actions[bot]' && github.actor != github.repository_owner && github.actor != 'kunchenguid'
     runs-on: ubuntu-latest
     steps:
       - name: Comment and close
