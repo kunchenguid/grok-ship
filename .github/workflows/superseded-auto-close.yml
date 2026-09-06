@@ -1,0 +1,35 @@
+name: Superseded auto-close
+
+on:
+  issues:
+    types: [opened, reopened]
+  pull_request:
+    types: [opened, reopened]
+
+permissions:
+  issues: write
+  pull-requests: write
+
+jobs:
+  close-as-superseded:
+    # Skip workflow loops and owner/maintenance issues or PRs.
+    if: github.actor != 'github-actions[bot]' && github.actor != github.repository_owner && github.actor != 'kunchenguid'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Comment and close
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NUMBER: ${{ github.event.issue.number || github.event.pull_request.number }}
+          EVENT_NAME: ${{ github.event_name }}
+          COMMENT: >-
+            Speaking as Kun's firstmate: this repository has been superseded.
+            Please use https://x.ai/bot/__4FfrkUdvpdMk6-LKg5r instead. Closing this.
+        run: |
+          set -euo pipefail
+          if [ "$EVENT_NAME" = "pull_request" ]; then
+            gh pr comment "$NUMBER" --repo "${{ github.repository }}" --body "$COMMENT"
+            gh pr close "$NUMBER" --repo "${{ github.repository }}"
+          else
+            gh issue comment "$NUMBER" --repo "${{ github.repository }}" --body "$COMMENT"
+            gh issue close "$NUMBER" --repo "${{ github.repository }}"
+          fi
