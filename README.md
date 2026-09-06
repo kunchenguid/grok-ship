@@ -18,6 +18,10 @@
   /></a>
 </p>
 
+> [!WARNING]
+> **This repository has been superseded** by the Firstmate/Grok Bot template:
+> https://x.ai/bot/__4FfrkUdvpdMk6-LKg5r
+
 <h3 align="center">Turn your Grok Bot into a software factory.</h3>
 
 ## What it is
