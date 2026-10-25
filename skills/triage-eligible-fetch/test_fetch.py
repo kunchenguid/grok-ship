@@ -1468,11 +1468,33 @@ class CliTests(unittest.TestCase):
         self.assertIn("FM-", addendum)
         self.assertIn("Cannot-tell / inconclusive / undecided blocks auto-merge", addendum)
         self.assertIn("Do not ignore some undecided rules", addendum)
+        self.assertIn("restore | new-default | opt-in | cannot-tell", addendum)
+        self.assertIn("Write this next to the VISION per-rule verdict", addendum)
+        self.assertIn("not new-default", addendum)
+        self.assertIn(
+            "the new behavior stays off unless the user turns it on", addendum
+        )
+        self.assertIn(
+            "Changing a default-on setting, or shipping a new default-on config, is new-default",
+            addendum,
+        )
+        self.assertNotIn("behind a flag or config", addendum)
         triage = Path(__file__).resolve().parents[2] / "TRIAGE.md"
         triage_text = triage.read_text()
         self.assertIn("Cannot-tell blocks auto-merge", triage_text)
         self.assertIn("Do not ignore some undecided rules", triage_text)
         self.assertNotIn("undecided rule that matters", triage_text)
+        self.assertIn("restore | new-default | opt-in | cannot-tell", triage_text)
+        self.assertIn("not a replacement of Classes", triage_text)
+        self.assertIn("not new-default", triage_text)
+        self.assertIn(
+            "the new behavior stays off unless the user turns it on", triage_text
+        )
+        self.assertIn(
+            "Changing a default-on setting, or shipping a new default-on config, is new-default",
+            triage_text,
+        )
+        self.assertNotIn("behind a flag or config", triage_text)
         vision = (
             Path(__file__).resolve().parents[2]
             / "skills/vision-md-triage-verdict/SKILL.md"
@@ -1480,6 +1502,17 @@ class CliTests(unittest.TestCase):
         self.assertIn("Cannot-tell blocks auto-merge", vision)
         self.assertIn("Do not ignore some undecided rules", vision)
         self.assertIn("do not auto-merge", vision)
+        self.assertIn("restore | new-default | opt-in | cannot-tell", vision)
+        self.assertIn("Write this next to the VISION per-rule verdict", vision)
+        self.assertIn("Do not special-case a repository", vision)
+        self.assertIn(
+            "the new behavior stays off unless the user turns it on", vision
+        )
+        self.assertIn(
+            "Changing a default-on setting, or shipping a new default-on config, is new-default",
+            vision,
+        )
+        self.assertNotIn("behind a flag or config", vision)
         readme = Path(__file__).resolve().parents[2] / "README.md"
         readme_text = readme.read_text()
         self.assertIn("factory ships never merge without your word", readme_text)
@@ -1488,6 +1521,7 @@ class CliTests(unittest.TestCase):
         self.assertIn("no cannot-tell", readme_text)
         self.assertIn("not default-behavior", readme_text)
         self.assertIn("not security", readme_text)
+        self.assertIn("not new-default", readme_text)
         self.assertIn("May auto-merge only when all of these hold", triage_text)
         self.assertIn(
             "Factory ships never merge without the captain's explicit word",
@@ -1495,10 +1529,12 @@ class CliTests(unittest.TestCase):
         )
         self.assertIn("wired triage crewmate may auto-merge", charter)
         self.assertIn("no cannot-tell", charter)
+        self.assertIn("not new-default", charter)
         ship = (Path(__file__).resolve().parents[2] / "GROK_SHIP.md").read_text()
         self.assertIn("Factory ships never merge without the captain's word", ship)
         self.assertIn("wired triage crewmate may auto-merge", ship)
         self.assertIn("no cannot-tell", ship)
+        self.assertIn("not new-default", ship)
 
     def test_parse_repo(self) -> None:
         self.assertEqual(fetch.parse_repo("acme/tools"), ("acme", "tools"))
