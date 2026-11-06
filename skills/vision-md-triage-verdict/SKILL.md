@@ -1,6 +1,6 @@
 ---
 name: VISION.md triage verdict
-description: Use before any final triage decision when the repo has a VISION.md. Read it in full. Per-rule aligns / does not align / cannot tell, with evidence. Claims are not enough. Cannot-tell / inconclusive / undecided is no verdict and blocks auto-merge. Write a contract-class verdict next to the per-rule list: restore | new-default | opt-in | cannot-tell. new-default and cannot-tell block auto-merge.
+description: "Use before any final triage decision when the repo has a VISION.md. Read it in full. Per-rule aligns / does not align / cannot tell, with evidence. Claims are not enough. Cannot-tell / inconclusive / undecided is no verdict and blocks auto-merge. Write a contract-class verdict next to the per-rule list: restore | new-default | opt-in | cannot-tell. new-default and cannot-tell block auto-merge."
 ---
 
 # VISION.md triage verdict
